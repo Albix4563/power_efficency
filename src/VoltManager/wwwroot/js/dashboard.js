@@ -635,7 +635,8 @@
     }
 
     async function pollProcesses() {
-        if (document.hidden) return;
+        if (document.hidden || processesList.closest('.hidden') ||
+            window.VoltResourceProfile?.allowProcessPolling === false) return;
         if (!Host.available || processesPolling) return;
         processesPolling = true;
         try {
@@ -649,11 +650,13 @@
 
     function processPollInterval() {
         const tier = document.documentElement.dataset.perfTier;
-        return tier === 'lite' ? 10000 : tier === 'balanced' ? 6000 : 3000;
+        return Math.max(tier === 'lite' ? 10000 : tier === 'balanced' ? 6000 : 3000,
+            Number(window.VoltResourceProfile?.processPollingIntervalMs) || 0);
     }
 
     function startProcessPolling() {
-        if (processesTimer || document.hidden) return;
+        if (processesTimer || document.hidden || processesList.closest('.hidden') ||
+            window.VoltResourceProfile?.allowProcessPolling === false) return;
         pollProcesses();
         processesTimer = setInterval(pollProcesses, processPollInterval());
     }
@@ -678,13 +681,20 @@
             }
             return;
         }
-        startProcessPolling();
+        if (processesList.closest('.hidden')) stopProcessPolling();
+        else startProcessPolling();
         startPowerFlowPolling();
         startBatteryHistoryPolling();
         renderOverrideStatus(activeOverride);
     }
 
     document.addEventListener('visibilitychange', syncDashboardPolling);
+    ['viewchange', 'voltuiviewchanged', 'voltuisubviewchanged', 'voltuiready'].forEach(name =>
+        document.addEventListener(name, syncDashboardPolling));
+    document.addEventListener('resourceprofilechange', () => {
+        stopProcessPolling();
+        startProcessPolling();
+    });
     document.addEventListener('perftierchange', () => {
         stopProcessPolling();
         startProcessPolling();

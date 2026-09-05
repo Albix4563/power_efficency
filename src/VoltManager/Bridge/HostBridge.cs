@@ -5,8 +5,10 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Win32;
 using Microsoft.Web.WebView2.Wpf;
+using Microsoft.Web.WebView2.Core;
 using VoltManager.Localization;
 using VoltManager.Models;
+using VoltManager.Performance;
 using VoltManager.Services;
 
 namespace VoltManager.Bridge;
@@ -16,7 +18,7 @@ namespace VoltManager.Bridge;
 /// JS sends {id, method, payload}; C# replies {id, ok, result|error}.
 /// C# pushes events as {event, data}.
 /// </summary>
-public class HostBridge
+public class HostBridge : IDisposable
 {
     // Shared with BridgeRpc so reply JSON and dispatch serialization stay identical.
     private static readonly JsonSerializerOptions JsonOpts = BridgeRpc.JsonOpts;
@@ -45,6 +47,8 @@ public class HostBridge
     private readonly App _app;
     private readonly LocalizationService _loc;
     private readonly bool _subscribeGlobalEvents;
+    private CoreWebView2? _attachedCore;
+    private volatile bool _disposed;
 
     public event Action? ExitRequested;
     public event Action? MinimizeToTrayRequested;
@@ -74,34 +78,82 @@ public class HostBridge
 
     public void Attach()
     {
-        _webView.CoreWebView2.WebMessageReceived += async (_, e) =>
-        {
-            string json;
-            try { json = e.WebMessageAsJson; }
-            catch (Exception ex)
-            {
-                // Reading the raw message can throw if the payload is malformed;
-                // never let it surface as an unhandled async-void exception.
-                Logger.Error("Could not read web message", ex);
-                return;
-            }
-            await HandleMessageAsync(json);
-        };
+        if (_disposed || _attachedCore != null) return;
+        _attachedCore = _webView.CoreWebView2;
+        _attachedCore.WebMessageReceived += OnWebMessageReceived;
 
         if (!_subscribeGlobalEvents) return;
 
-        _updates.DownloadProgress += pct => PushEvent("updateDownloadProgress", new { pct });
-        _app.HeavyApps.ActivityChanged += state => PushEvent("heavyAppActivityChanged", state);
-        _app.AppProfiles.ActivityChanged += state => PushEvent("appPowerProfileActivityChanged", state);
-        _app.ActivePlanReasonChanged += state => PushEvent("activePlanReasonChanged", state);
-        _app.PowerPlanConflictDetected += notice => PushEvent("powerPlanConflictDetected", notice);
-        _app.StandbyAutoCleaner.AutoCleaned += freshMem => PushEvent("standbyAutoCleaned", freshMem);
+        _updates.DownloadProgress += OnDownloadProgress;
+        _app.HeavyApps.ActivityChanged += OnHeavyAppsChanged;
+        _app.AppProfiles.ActivityChanged += OnAppProfilesChanged;
+        _app.ActivePlanReasonChanged += OnPlanReasonChanged;
+        _app.PowerPlanConflictDetected += OnPlanConflict;
+        _app.StandbyAutoCleaner.AutoCleaned += OnStandbyCleaned;
+    }
+
+    private async void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        if (_disposed) return;
+        string json;
+        try { json = e.WebMessageAsJson; }
+        catch (Exception ex)
+        {
+            Logger.Error("Could not read web message", ex);
+            return;
+        }
+        await HandleMessageAsync(json);
+    }
+
+    private void OnDownloadProgress(double pct) => PushEvent("updateDownloadProgress", new { pct });
+    private void OnHeavyAppsChanged(HeavyAppDetectionState state) => PushEvent("heavyAppActivityChanged", state);
+    private void OnAppProfilesChanged(AppPowerProfileState state) => PushEvent("appPowerProfileActivityChanged", state);
+    private void OnPlanReasonChanged(ActivePlanReasonState state) => PushEvent("activePlanReasonChanged", state);
+    private void OnPlanConflict(PowerPlanConflictNotification notice) => PushEvent("powerPlanConflictDetected", notice);
+    private void OnStandbyCleaned(MemoryStatus memory) => PushEvent("standbyAutoCleaned", memory);
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { if (_attachedCore != null) _attachedCore.WebMessageReceived -= OnWebMessageReceived; }
+        catch { /* A crashed browser may have already disposed the COM object. */ }
+        _attachedCore = null;
+        if (!_subscribeGlobalEvents) return;
+        _updates.DownloadProgress -= OnDownloadProgress;
+        _app.HeavyApps.ActivityChanged -= OnHeavyAppsChanged;
+        _app.AppProfiles.ActivityChanged -= OnAppProfilesChanged;
+        _app.ActivePlanReasonChanged -= OnPlanReasonChanged;
+        _app.PowerPlanConflictDetected -= OnPlanConflict;
+        _app.StandbyAutoCleaner.AutoCleaned -= OnStandbyCleaned;
     }
 
     private bool _pushEventFaulted;
+    private readonly UiMetricsPublisher _metricsPublisher = new();
 
     public void PushEvent(string name, object data)
     {
+        if (_disposed) return;
+        if (name != "metrics")
+        {
+            PostEvent(name, data);
+            return;
+        }
+        try
+        {
+            _metricsPublisher.QueueLatest(data,
+                action => _webView.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background, action),
+                latest => PostEvent("metrics", latest));
+        }
+        catch (Exception ex)
+        {
+            _pushEventFaulted = Logger.WarnOnce(_pushEventFaulted, "Metrics dispatch failed", ex);
+        }
+    }
+
+    private void PostEvent(string name, object data)
+    {
+        if (_disposed) return;
         try
         {
             var payload = JsonSerializer.Serialize(new { @event = name, data }, JsonOpts);
@@ -146,6 +198,7 @@ public class HostBridge
 
     private void PostReplyJson(string msg)
     {
+        if (_disposed) return;
         _webView.Dispatcher.Invoke(() =>
         {
             try { _webView.CoreWebView2?.PostWebMessageAsJson(msg); }
@@ -520,7 +573,7 @@ public class HostBridge
                             payload.TryGetProperty("count", out var cntEl) &&
                             cntEl.ValueKind == JsonValueKind.Number
                     ? cntEl.GetInt32() : 8;
-                return await Task.Run(() => _monitor.GetTopProcesses(count));
+                return await Task.Run(() => _monitor.GetTopProcesses(count, _app.ResourcePressure?.Current));
             }
 
             case "getStartupApps":

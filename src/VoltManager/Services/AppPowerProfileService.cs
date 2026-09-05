@@ -35,6 +35,7 @@ public sealed class AppPowerProfileService : IDisposable
     private readonly SettingsService _settings;
     private readonly object _lock = new();
     private Timer? _timer;
+    private int _scanRunning;
     private bool _scanFaulted; // throttles scan-failure logging to once per streak
     private AppPowerProfileState _current = new();
 
@@ -70,6 +71,7 @@ public sealed class AppPowerProfileService : IDisposable
 
     private void ScanSafe()
     {
+        if (Interlocked.Exchange(ref _scanRunning, 1) != 0) return;
         try
         {
             Scan();
@@ -81,6 +83,7 @@ public sealed class AppPowerProfileService : IDisposable
             // log the first failure of a streak so a real bug isn't hidden.
             _scanFaulted = Logger.WarnOnce(_scanFaulted, "App-profile scan failed", ex);
         }
+        finally { Volatile.Write(ref _scanRunning, 0); }
     }
 
     private void Scan()

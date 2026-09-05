@@ -85,14 +85,14 @@ public sealed class UninstallLifecycleContractTests
     public void Shutdown_signal_wakes_an_existing_application_listener()
     {
         Type type = RequireArtifactsType();
-        string eventName = Assert.IsType<string>(
-            type.GetProperty("UninstallShutdownEventName", BindingFlags.Public | BindingFlags.Static)!.GetValue(null));
-        MethodInfo? method = type.GetMethod("TrySignalApplicationShutdown", BindingFlags.Public | BindingFlags.Static);
+        // Never signal the installed app's event: its listener would consume the signal and exit.
+        string eventName = "VoltManagerTests_Shutdown_" + Guid.NewGuid().ToString("N");
+        MethodInfo? method = type.GetMethod("TrySignalShutdownEvent", BindingFlags.NonPublic | BindingFlags.Static);
         Assert.NotNull(method);
 
         using var shutdownEvent = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
 
-        bool signaled = Assert.IsType<bool>(method!.Invoke(null, null));
+        bool signaled = Assert.IsType<bool>(method!.Invoke(null, new object[] { eventName }));
         Assert.True(signaled);
         Assert.True(shutdownEvent.WaitOne(TimeSpan.FromSeconds(1)));
     }

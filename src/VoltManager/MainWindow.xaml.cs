@@ -71,6 +71,7 @@ public partial class MainWindow : Window
         Closing += OnClosingToTray;
         Closed += (_, _) =>
         {
+            _bridge?.Dispose();
             _autoUpdateTimer?.Dispose();
             _trayTeardownTimer?.Dispose();
             _workingSetTrimTimer?.Dispose();
@@ -210,6 +211,7 @@ public partial class MainWindow : Window
         try { core.Settings.IsGeneralAutofillEnabled = false; } catch { /* older runtime */ }
         try { core.Settings.IsPasswordAutosaveEnabled = false; } catch { /* older runtime */ }
 
+        _bridge?.Dispose();
         _bridge = new HostBridge(WebView, _app.Hardware, _app.Power, _app.Settings, _app.Updates, _app.AutoStart, _app.Monitor, _app);
         _bridge.Attach();
         _bridge.ExitRequested += () => Dispatcher.Invoke(() => { _exiting = true; _app.ExitApp(); });
@@ -259,6 +261,12 @@ public partial class MainWindow : Window
                     _navStopwatch.Reset();
                 }
                 LoadUpdateSuspensionUi(core);
+            }
+            if (!_webViewVisible)
+            {
+                TrySuspendWebView();
+                if (!IsVisible && !src.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+                    ScheduleTrayTeardown();
             }
             if (startupToastDone) return;
             startupToastDone = true;
@@ -330,7 +338,26 @@ public partial class MainWindow : Window
     }
 
     private void UpdateWebViewVisibility()
-        => _webViewVisible = IsVisible && WindowState != WindowState.Minimized;
+    {
+        bool visible = IsVisible && WindowState != WindowState.Minimized;
+        if (_webViewVisible == visible) return;
+        _webViewVisible = visible;
+        // TrySuspendAsync requires an invisible controller, including taskbar minimize.
+        WebView.Visibility = visible ? Visibility.Visible : Visibility.Hidden;
+        if (!visible)
+        {
+            if (_webViewReady)
+            {
+                TrySuspendWebView();
+                // Preserve the current page/forms on a normal taskbar minimize.
+                if (!IsVisible) ScheduleTrayTeardown();
+            }
+            return;
+        }
+
+        CancelTrayTeardown();
+        ResumeWebView();
+    }
 
     private void OnMetricsUpdated(MetricsSnapshot metrics)
     {
@@ -685,35 +712,34 @@ public partial class MainWindow : Window
         {
             await EnsureWebViewAsync();
             ResumeWebView();
-            // If tray teardown blanked the page, put the dashboard back.
-            try
-            {
-                var core = WebView.CoreWebView2;
-                if (core != null &&
-                    (string.IsNullOrEmpty(core.Source) ||
-                     core.Source.StartsWith("about:", StringComparison.OrdinalIgnoreCase)))
-                {
-                    NavigateToAppDocument(core);
-                }
-            }
-            catch (Exception ex) { Logger.Warn("WebView restore after tray failed: " + ex.Message); }
         });
     }
 
-    private void TrySuspendWebView()
+    private async void TrySuspendWebView()
     {
         try
         {
-            // Best-effort: pause renderer work and let WebView2 lower its own memory target.
-            _ = WebView.CoreWebView2?.TrySuspendAsync();
+            var core = WebView.CoreWebView2;
+            if (core == null || _webViewVisible) return;
+            await core.TrySuspendAsync();
+            // A restore can overtake an in-flight suspend. The visible document must win.
+            if (_webViewVisible) core.Resume();
         }
         catch (Exception ex) { Logger.Warn("WebView TrySuspend failed: " + ex.Message); }
     }
 
     private void ResumeWebView()
     {
-        try { WebView.CoreWebView2?.Resume(); }
-        catch (Exception ex) { Logger.Warn("WebView Resume failed: " + ex.Message); }
+        if (!_webViewVisible) return;
+        try
+        {
+            var core = WebView.CoreWebView2;
+            core?.Resume();
+            if (_webViewReady && core != null &&
+                (string.IsNullOrEmpty(core.Source) || core.Source.StartsWith("about:", StringComparison.OrdinalIgnoreCase)))
+                NavigateToAppDocument(core);
+        }
+        catch (Exception ex) { Logger.Warn("WebView restore failed: " + ex.Message); }
     }
 
     private void ScheduleTrayTeardown()
@@ -748,7 +774,7 @@ public partial class MainWindow : Window
         _workingSetTrimTimer?.Dispose();
         _workingSetTrimTimer = new System.Threading.Timer(_ =>
         {
-            if (_webViewVisible || _exiting) return;
+            if (_webViewVisible || _exiting || _app.Widgets.HasOpenWindows) return;
             try
             {
                 int trimmed = _memoryOptimizer.TrimParkedWorkingSets();

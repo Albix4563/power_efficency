@@ -11,6 +11,10 @@
     let keepAwake = false;
     let settingKeepAwake = false;
     let clockTimer = null;
+    let dateTick = null;
+    let powerTimer = null;
+    let powerPolling = false;
+    let resourceProfile = 'full';
     let locale = (window.I18n && I18n.getLocale ? I18n.getLocale() : 'it-IT');
     document.documentElement.dataset.size = size;
 
@@ -128,24 +132,38 @@
         shell('<div class="widget-value" id="clock-time">--:--</div>' + (size === 'mini' ? '' : '<div class="widget-muted" id="clock-date">--</div>'));
         const timeEl = document.getElementById('clock-time');
         const dateEl = document.getElementById('clock-date');
-        function tick() {
+        const timeFormat = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' });
+        const dateFormat = new Intl.DateTimeFormat(locale, { weekday: 'long', day: '2-digit', month: 'long' });
+        dateTick = () => {
             const now = new Date();
-            timeEl.textContent = new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(now);
-            if (dateEl) dateEl.textContent = new Intl.DateTimeFormat(locale, { weekday: 'long', day: '2-digit', month: 'long' }).format(now);
-        }
-        tick();
-        if (clockTimer != null) clearInterval(clockTimer);
-        clockTimer = setInterval(tick, 1000);
+            timeEl.textContent = timeFormat.format(now);
+            if (dateEl) dateEl.textContent = dateFormat.format(now);
+        };
+        scheduleDateTick();
+    }
+
+    function scheduleDateTick() {
+        if (clockTimer != null) clearTimeout(clockTimer);
+        clockTimer = null;
+        if (!dateTick || document.hidden) return;
+        dateTick();
+        const now = new Date();
+        const next = type === 'calendar'
+            ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime()
+            : (Math.floor(now.getTime() / 60000) + 1) * 60000;
+        clockTimer = setTimeout(scheduleDateTick, next - now.getTime());
     }
 
     function startCalendar() {
         if (size === 'mini') {
             shell('<div class="calendar-mini"><div class="widget-muted" id="calendar-mini-weekday">--</div><div class="calendar-mini-day" id="calendar-mini-day">--</div><div class="widget-muted" id="calendar-mini-month">--</div></div>');
-            renderCalendarMini();
+            dateTick = renderCalendarMini;
+            scheduleDateTick();
             return;
         }
         shell('<div class="widget-muted" id="calendar-title" style="margin-bottom:10px"></div><div class="calendar-head" id="calendar-head"></div><div class="calendar-grid" id="calendar-grid"></div>');
-        renderCalendar();
+        dateTick = renderCalendar;
+        scheduleDateTick();
     }
 
     function renderCalendarMini() {
@@ -243,21 +261,32 @@
                 '<div class="power-row"><span class="widget-muted" data-i18n="widget_cpu_auto">CPU avg</span><strong id="power-auto-cpu">--</strong></div>' +
                 '<div class="power-row"><span class="widget-muted" data-i18n="widget_sample_interval">Sample</span><strong id="power-auto-sample">--</strong></div>'));
         if (window.I18n && I18n.apply) I18n.apply();
-        pollPower();
+        syncPowerPolling();
         if (size !== 'mini') {
             pollPlan();
             pollCpuAutomation();
         }
-        setInterval(pollPower, 5000);
         Host.on('activePlanChanged', (data) => renderPlan(data && data.plan));
         Host.on('cpuAutomationStateChanged', renderCpuAutomation);
     }
 
     async function pollPower() {
+        if (document.hidden || powerPolling) return;
+        powerPolling = true;
         try {
             const state = await Host.call('getBatteryPower');
             renderPower(state);
         } catch { }
+        finally { powerPolling = false; }
+    }
+
+    function syncPowerPolling() {
+        if (powerTimer != null) clearInterval(powerTimer);
+        powerTimer = null;
+        if (type !== 'power' || document.hidden) return;
+        pollPower();
+        powerTimer = setInterval(pollPower,
+            resourceProfile === 'critical' ? 15000 : resourceProfile === 'gaming' ? 10000 : 5000);
     }
 
     async function pollPlan() {
@@ -367,9 +396,6 @@
         }
 
         pollPlanSelector();
-        Host.on('activePlanChanged', function (data) {
-            reflectPlanSelector(data && data.plan);
-        });
     }
 
     async function pollPlanSelector() {
@@ -461,6 +487,19 @@
             case 'calendar': startCalendar(); break;
             case 'plans': startPlans(); break;
         }
+    });
+
+    if (type === 'plans') Host.on('activePlanChanged', data => reflectPlanSelector(data && data.plan));
+    Host.on('resourceProfileChanged', state => {
+        const profile = state && state.profile;
+        if (!['full', 'balanced', 'gaming', 'critical'].includes(profile) || profile === resourceProfile) return;
+        resourceProfile = profile;
+        document.documentElement.dataset.resourceProfile = profile;
+        syncPowerPolling();
+    });
+    document.addEventListener('visibilitychange', () => {
+        scheduleDateTick();
+        syncPowerPolling();
     });
 
     ({ clock: startClock, calendar: startCalendar, usage: startUsage, temps: startTemps, power: startPower, plans: startPlans }[type] || startClock)();

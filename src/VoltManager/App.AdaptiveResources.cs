@@ -47,6 +47,7 @@ public partial class App
 
     private void OnResourcePressureStateChanged(ResourcePressureState state)
     {
+        Widgets.PushResourceProfile(state);
         // Logging only on operational transitions (the coordinator suppresses per-sample noise).
         Logger.Info($"Resource profile: {state.Profile} ({state.Reason}), " +
                     $"game={state.GameActive}, ui={state.UiVisible}");

@@ -56,10 +56,13 @@ namespace VoltManager.Services
         /// Returns false when no listener exists yet/already.
         /// </summary>
         public static bool TrySignalApplicationShutdown()
+            => TrySignalShutdownEvent(UninstallShutdownEventName);
+
+        internal static bool TrySignalShutdownEvent(string eventName)
         {
             try
             {
-                using (EventWaitHandle shutdownEvent = EventWaitHandle.OpenExisting(UninstallShutdownEventName))
+                using (EventWaitHandle shutdownEvent = EventWaitHandle.OpenExisting(eventName))
                 {
                     return shutdownEvent.Set();
                 }

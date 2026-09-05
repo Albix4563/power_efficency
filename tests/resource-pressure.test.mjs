@@ -54,3 +54,20 @@ test('WebView lifecycle uses suspend-resume without mixing manual memory target 
 test('tray-only startup schedules the existing working-set trim', () => {
   assert.match(mainWindowHost, /if \(startMinimized\)[\s\S]*?Hide\(\);\s*ScheduleWorkingSetTrim\(\);/);
 });
+
+test('minimize hides the renderer before suspending and reserves teardown for the tray', () => {
+  const visibility = mainWindowHost.slice(mainWindowHost.indexOf('private void UpdateWebViewVisibility()'),
+    mainWindowHost.indexOf('private void OnMetricsUpdated('));
+  assert.match(visibility, /WebView\.Visibility = visible \? Visibility\.Visible : Visibility\.Hidden;/);
+  assert.match(visibility, /TrySuspendWebView\(\);\s*\/\/[^\n]*\n\s*if \(!IsVisible\) ScheduleTrayTeardown\(\);/);
+  assert.match(mainWindowHost, /await core\.TrySuspendAsync\(\);[\s\S]*?if \(_webViewVisible\) core\.Resume\(\);/);
+  assert.match(mainWindowHost, /private void ResumeWebView\(\)\s*\{\s*if \(!_webViewVisible\) return;/);
+  assert.match(mainWindowHost, /_webViewVisible \|\| _exiting \|\| _app\.Widgets\.HasOpenWindows/);
+});
+
+test('idle decorative animations require rich effects, while progress animations stay independent', () => {
+  for (const selector of ['.fx-title', '.nav-indicator', '#monitoring-dot', '#monitoring-dot::after'])
+    assert.ok(effectsCss.includes(`html:not([data-fx="rich"]) ${selector}`));
+  assert.match(effectsCss, /html\[data-perf-tier="lite"\] #monitoring-dot \{ animation: none !important; \}/);
+  assert.doesNotMatch(effectsCss, /html:not\(\[data-fx="rich"\]\)\s+\.animate-spin/);
+});

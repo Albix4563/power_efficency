@@ -193,10 +193,26 @@
 
 /* ---------- 9. Reduced-motion: kill every continuous animation ---------- */
 
+/* Match effects.js: decorative loops are opt-in, including the Tailwind pulse
+   on the status dot itself. Keep loading/progress animations independent. */
+html:not([data-fx="rich"]) .fx-title,
+html:not([data-fx="rich"]) .nav-indicator,
+html:not([data-fx="rich"]) #monitoring-dot,
+html:not([data-fx="rich"]) #monitoring-dot::after,
+html[data-perf="lite"] #monitoring-dot,
+html[data-perf-tier="balanced"] #monitoring-dot,
+html[data-perf-tier="lite"] #monitoring-dot { animation: none !important; }
+
+html:not([data-fx="rich"]) .fx-title {
+  color: var(--vm-text, #d4e4fa);
+  -webkit-text-fill-color: currentColor;
+}
+
 @media (prefers-reduced-motion: reduce){
   .vm-aurora__orb,
   .fx-title,
   .nav-indicator,
+  #monitoring-dot,
   #monitoring-dot.animate-pulse::after,
   .glass-card.fx-sheen::before{ animation: none !important; }
   .fx-title{ color: var(--vm-text,#d4e4fa); -webkit-text-fill-color: currentColor; }

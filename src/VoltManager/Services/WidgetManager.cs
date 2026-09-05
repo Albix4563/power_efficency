@@ -2,6 +2,7 @@ using System.Windows;
 using Microsoft.Web.WebView2.Core;
 using VoltManager.Localization;
 using VoltManager.Models;
+using VoltManager.Performance;
 
 namespace VoltManager.Services;
 
@@ -42,6 +43,8 @@ public sealed class WidgetManager : IDisposable
     private bool _disposing;
     private bool _relayoutQueued;
     private bool _displayInit;
+    private volatile bool _hasOpenWindows;
+    internal bool HasOpenWindows => _hasOpenWindows;
 
     public event Action<WidgetStateSnapshot>? StateChanged;
 
@@ -201,7 +204,11 @@ public sealed class WidgetManager : IDisposable
         });
     }
 
-    internal void ForgetWindow(string type) => _windows.Remove(type);
+    internal void ForgetWindow(string type)
+    {
+        _windows.Remove(type);
+        _hasOpenWindows = _windows.Count != 0;
+    }
 
     internal void PushTheme()
     {
@@ -222,6 +229,15 @@ public sealed class WidgetManager : IDisposable
         var data = new { font = _app.Settings.Current.Font };
         foreach (var window in _windows.Values.ToList())
             window.PushEvent("fontChanged", data);
+    }
+
+    internal void PushResourceProfile(ResourcePressureState state)
+    {
+        Application.Current?.Dispatcher.BeginInvoke(() =>
+        {
+            if (_disposing) return;
+            foreach (var window in _windows.Values) window.PushResourceProfile(state);
+        });
     }
 
     public static Size GetWidgetSize(string type, string size = "medium") => (type, WidgetSettings.NormalizeSize(size)) switch
@@ -411,6 +427,7 @@ public sealed class WidgetManager : IDisposable
 
         var window = new WidgetWindow(_app, this, item, EnvTask(), GetWidgetSize(item.Type, item.Size), placement);
         _windows[item.Type] = window;
+        _hasOpenWindows = true;
         window.Closed += (_, _) => ForgetWindow(item.Type);
         window.Show();
     }
@@ -426,6 +443,7 @@ public sealed class WidgetManager : IDisposable
         foreach (var window in _windows.Values.ToList())
             window.Close();
         _windows.Clear();
+        _hasOpenWindows = false;
         _lastPlacements.Clear();
     }
 

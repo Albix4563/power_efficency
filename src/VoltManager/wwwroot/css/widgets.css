@@ -463,3 +463,6 @@ html[data-size=large] .plan-option-label {
     transform: none !important;
   }
 }
+/* Under load, metric changes need one paint rather than a transition each sample. */
+html[data-resource-profile="gaming"] .widget-bar span,
+html[data-resource-profile="critical"] .widget-bar span { transition: none; }

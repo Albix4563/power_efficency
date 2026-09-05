@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Management;
 using System.Runtime.InteropServices;
 using VoltManager.Models;
+using VoltManager.Performance;
 
 namespace VoltManager.Services;
 
@@ -15,7 +16,10 @@ public class MonitorService : IDisposable
     private readonly GpuCounterProvider _gpu;
     private readonly HardwareSensorProvider _sensors;
     private readonly double _ramTotalGb;
-    private readonly int _processScanEveryTicks;
+    private readonly TimeSpan _processPollingInterval;
+    private readonly WebViewResourceController _resourceController = new();
+    private readonly ProcessMetricsSampler _processMetrics = new(
+        () => ProcessSnapshotProvider.Get(ProcessSnapshotMaxAge), Environment.ProcessorCount);
     private System.Threading.Timer? _timer;
     private int _tickRunning; // reentrancy guard: skip a tick if the prior one is still in WMI
     private bool _tickFaulted; // throttles error logging to once per failure streak
@@ -33,9 +37,8 @@ public class MonitorService : IDisposable
     private static readonly TimeSpan CpuClockRefreshInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan RamClockRefreshInterval = TimeSpan.FromMinutes(5);
 
-    // Above this system-RAM %, skip the full Process.GetProcesses() scan — it is the
-    // loop's heaviest allocator, and on a saturated machine that churn is exactly what
-    // tips the app over. The top-processes panel just goes briefly stale instead.
+    // Under memory pressure keep the last display-only process list. Safety and
+    // game detection retain their independent sensor/process sampling.
     private const double ProcessScanRamCutoffPct = 92;
 
     // Snapshots older than this force a fresh capture. Kept just under the shortest
@@ -43,21 +46,10 @@ public class MonitorService : IDisposable
     // capture instead of enumerating the system again.
     private static readonly TimeSpan ProcessSnapshotMaxAge = TimeSpan.FromMilliseconds(2500);
 
-    private static readonly int ProcessorCount = Environment.ProcessorCount;
-    // Two dictionaries swapped each scan: refilling a cleared one avoids allocating a
-    // few-hundred-entry table on every process tick.
-    private Dictionary<int, TimeSpan> _prevProcessCpuTimes = new();
-    private Dictionary<int, TimeSpan> _spareProcessCpuTimes = new();
-    private DateTime _prevProcessSampleTime;
-    private List<ProcessInfo> _cachedTopProcesses = new();
-    private int _processTickCounter;
     private TimeSpan _interval = TimeSpan.FromSeconds(1);
 
     public event Action<MetricsSnapshot>? MetricsUpdated;
     public MetricsSnapshot Latest { get; private set; } = new();
-
-    /// <summary>Exposes the process-scan cadence bucket chosen at construction (for tests).</summary>
-    public int ProcessScanEveryTicks => _processScanEveryTicks;
 
     // The monitor tick is user-configurable and can run slower than the 5s heavy-app scan.
     // Past this age the per-process GPU map is dropped rather than reused stale.
@@ -80,9 +72,9 @@ public class MonitorService : IDisposable
         // No WMI/GetSystemInfo on the startup path: cores + RAM from free OS APIs.
         _ramTotalGb = HardwareInfoService.ReadInstalledRamGb();
         int cores = Environment.ProcessorCount;
-        _processScanEveryTicks = _ramTotalGb < 8 || cores <= 2
+        _processPollingInterval = TimeSpan.FromSeconds(_ramTotalGb < 8 || cores <= 2
             ? 10
-            : _ramTotalGb < 16 || cores <= 4 ? 6 : 3;
+            : _ramTotalGb < 16 || cores <= 4 ? 6 : 3);
         _gpu = new GpuCounterProvider();
         _sensors = new HardwareSensorProvider(hardwareAccess);
         // PERFLIB can block for seconds on a cold Windows boot. Metrics degrade to zero
@@ -234,12 +226,6 @@ public class MonitorService : IDisposable
                 Sensors = sensors.Readings,
             };
             MetricsUpdated?.Invoke(Latest);
-
-            if (++_processTickCounter >= _processScanEveryTicks)
-            {
-                _processTickCounter = 0;
-                if (pct < ProcessScanRamCutoffPct) UpdateProcesses();
-            }
 
             if (_tickFaulted)
             {
@@ -399,63 +385,23 @@ public class MonitorService : IDisposable
         public ulong AvailableExtendedVirtual;
     }
 
-    public List<ProcessInfo> GetTopProcesses(int count = 8)
-        => _cachedTopProcesses.Take(count).ToList();
-
-    private void UpdateProcesses()
+    // Display-only sampling belongs to its consumer, never to the safety timer.
+    public List<ProcessInfo> GetTopProcesses(int count = 8, ResourcePressureState? resources = null)
     {
+        var plan = _resourceController.Resolve(resources?.Profile ?? ResourceProfile.Full,
+            resources?.UiVisible ?? true);
+        var interval = !plan.AllowProcessPolling || Latest.RamPct >= ProcessScanRamCutoffPct
+            ? Timeout.InfiniteTimeSpan
+            : plan.ProcessPollingInterval > _processPollingInterval
+                ? plan.ProcessPollingInterval : _processPollingInterval;
         try
         {
-            var snapshot = ProcessSnapshotProvider.Get(ProcessSnapshotMaxAge);
-            var now = snapshot.TakenUtc;
-            // A shared snapshot can be the very one the previous tick already consumed;
-            // there is no new CPU delta to compute, so keep the current list.
-            if (now <= _prevProcessSampleTime) return;
-
-            var elapsed = (now - _prevProcessSampleTime).TotalSeconds;
-            bool hasPrevious = _prevProcessCpuTimes.Count > 0 && elapsed > 0 && elapsed < 30;
-
-            var currentTimes = _spareProcessCpuTimes;
-            currentTimes.Clear();
-            var results = new List<(string Name, int Pid, double CpuPct, double RamMb)>(snapshot.Processes.Length);
-
-            foreach (var p in snapshot.Processes)
-            {
-                if (p.Pid == 0) continue;
-                currentTimes[p.Pid] = p.CpuTime;
-
-                double cpuPct = 0;
-                if (hasPrevious && _prevProcessCpuTimes.TryGetValue(p.Pid, out var prev))
-                {
-                    cpuPct = (p.CpuTime - prev).TotalSeconds / elapsed / ProcessorCount * 100;
-                    cpuPct = Math.Clamp(cpuPct, 0, 100);
-                }
-
-                results.Add((p.Name, p.Pid, cpuPct, p.WorkingSetBytes / (1024.0 * 1024)));
-            }
-
-            _spareProcessCpuTimes = _prevProcessCpuTimes;
-            _prevProcessCpuTimes = currentTimes;
-            _prevProcessSampleTime = now;
-
-            _cachedTopProcesses = results
-                .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
-                .Select(g => new ProcessInfo
-                {
-                    Name = g.Key,
-                    Pid = g.First().Pid,
-                    CpuPercent = Math.Round(g.Sum(r => r.CpuPct), 1),
-                    RamMb = Math.Round(g.Sum(r => r.RamMb), 0),
-                    Instances = g.Count(),
-                })
-                .OrderByDescending(p => p.CpuPercent)
-                .ThenByDescending(p => p.RamMb)
-                .Take(12)
-                .ToList();
+            return _processMetrics.Read(count, interval, DateTime.UtcNow);
         }
         catch (Exception ex)
         {
             Logger.Error("Process monitor update failed", ex);
+            return _processMetrics.Read(count, Timeout.InfiniteTimeSpan, DateTime.UtcNow);
         }
     }
 

@@ -6,6 +6,7 @@ using Drawing = System.Drawing;
 using Microsoft.Web.WebView2.Core;
 using VoltManager.Bridge;
 using VoltManager.Models;
+using VoltManager.Performance;
 using VoltManager.Services;
 
 namespace VoltManager;
@@ -33,6 +34,12 @@ public partial class WidgetWindow : Window
     private HwndSource? _hwndSource;
     private bool _applyingPlacement;
     private int _rendererReloadCount;
+    private bool _initializing;
+    private volatile bool _closed;
+    private volatile bool _visible;
+    private readonly UiMetricsPublisher _metricsPublisher = new();
+    private readonly WebViewResourceController _resourceController = new();
+    private static readonly string DocumentVersion = typeof(App).Assembly.GetName().Version?.ToString(3) ?? "1.0.0";
 
     public WidgetWindow(App app, WidgetManager manager, WidgetItem item,
         Task<CoreWebView2Environment> envTask, Size size, WidgetPlacement placement)
@@ -53,6 +60,11 @@ public partial class WidgetWindow : Window
         Topmost = item.Pinned;
 
         Loaded += async (_, _) => await InitWebViewAsync();
+        IsVisibleChanged += (_, _) =>
+        {
+            _visible = IsVisible;
+            if (_visible) _metricsPublisher.ResetCadence();
+        };
         SourceInitialized += (_, _) =>
         {
             ApplyToolWindowStyle();
@@ -69,15 +81,18 @@ public partial class WidgetWindow : Window
 
     private async Task InitWebViewAsync()
     {
+        if (_closed || _initializing) return;
+        _initializing = true;
         try
         {
             WebView.DefaultBackgroundColor = Drawing.Color.FromArgb(255, 14, 26, 46);
             await WebView.EnsureCoreWebView2Async(await _envTask);
+            if (_closed) return;
         }
         catch (Exception ex)
         {
             Logger.Error("Widget WebView2 initialization failed", ex);
-            Close();
+            if (!_closed) Close();
             return;
         }
 
@@ -102,23 +117,26 @@ public partial class WidgetWindow : Window
             _bridge.WidgetTopmostRequested += SetTopmostFromWidget;
             _bridge.WidgetCloseRequested += () => _manager.SetEnabled(_type, false);
 
-            _app.Monitor.MetricsUpdated += OnMetricsUpdated;
-            _app.ActivePlanChanged += OnActivePlanChanged;
-            _app.CpuAutomationStateChanged += OnCpuAutomationStateChanged;
-            _app.Awake.StateChanged += OnKeepAwakeStateChanged;
+            if (_type is "usage" or "temps") _app.Monitor.MetricsUpdated += OnMetricsUpdated;
+            if (_type is "power" or "plans") _app.ActivePlanChanged += OnActivePlanChanged;
+            if (_type == "power") _app.CpuAutomationStateChanged += OnCpuAutomationStateChanged;
+            if (_type == "plans") _app.Awake.StateChanged += OnKeepAwakeStateChanged;
 
             core.ProcessFailed += OnWidgetProcessFailed;
 
             core.NavigationCompleted += (_, args) =>
             {
                 if (!args.IsSuccess) return;
-                _bridge?.PushEvent("metrics", _app.Monitor.Latest);
-                OnActivePlanChanged(_app.ActivePlan);
-                OnCpuAutomationStateChanged(_app.CpuAutomationState);
-                _bridge?.PushEvent("keepAwakeChanged", _app.Awake.GetState());
-                _manager.PushTheme();
-                _manager.PushLanguage();
-                _manager.PushFont();
+                _metricsPublisher.ResetCadence();
+                OnMetricsUpdated(_app.Monitor.Latest);
+                if (_type is "power" or "plans") OnActivePlanChanged(_app.ActivePlan);
+                if (_type == "power") OnCpuAutomationStateChanged(_app.CpuAutomationState);
+                if (_type == "plans") OnKeepAwakeStateChanged(_app.Awake.GetState());
+                // Initialize this document only: broadcasting on every widget load was O(n²).
+                _bridge?.PushEvent("themeChanged", _app.Theme.GetWebTheme());
+                _bridge?.PushEvent("languageChanged", new { language = _app.Loc.CurrentLanguage, locale = _app.Loc.CurrentCulture.Name });
+                _bridge?.PushEvent("fontChanged", new { font = _app.Settings.Current.Font });
+                PushResourceProfile(_app.ResourcePressure?.Current ?? new ResourcePressureState());
             };
 
             core.Navigate(WidgetUrl());
@@ -126,7 +144,7 @@ public partial class WidgetWindow : Window
         catch (Exception ex)
         {
             Logger.Error("Widget WebView setup failed", ex);
-            Close();
+            if (!_closed) Close();
         }
     }
 
@@ -236,9 +254,30 @@ public partial class WidgetWindow : Window
     private string WidgetUrl() =>
         "https://app.local/widgets.html?w=" + Uri.EscapeDataString(_type) +
         "&s=" + Uri.EscapeDataString(_size) +
-        "&v=" + DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        "&v=" + DocumentVersion;
 
-    private void OnMetricsUpdated(MetricsSnapshot metrics) => _bridge?.PushEvent("metrics", metrics);
+    private void OnMetricsUpdated(MetricsSnapshot metrics)
+    {
+        if (_closed || !_visible || _type is not ("usage" or "temps")) return;
+        var plan = _resourceController.Resolve(_app.ResourcePressure?.Current.Profile ?? ResourceProfile.Full, true);
+        if (_metricsPublisher.TryTake(metrics, plan, DateTime.UtcNow, out var latest) && latest != null)
+            _bridge?.PushEvent("metrics", MetricsPayload(_type, latest)!);
+    }
+
+    internal static object? MetricsPayload(string type, MetricsSnapshot metrics) => type switch
+    {
+        "usage" => new { cpu = metrics.Cpu, gpu = metrics.Gpu, gpuAvailable = metrics.GpuAvailable,
+            ramPct = metrics.RamPct, disk = metrics.Disk },
+        "temps" => new { cpuTemp = metrics.CpuTemp, gpuTemp = metrics.GpuTemp },
+        _ => null,
+    };
+
+    internal void PushResourceProfile(ResourcePressureState state)
+    {
+        if (_closed) return;
+        _metricsPublisher.ResetCadence();
+        _bridge?.PushEvent("resourceProfileChanged", new { profile = state.Profile.ToString().ToLowerInvariant() });
+    }
 
     private void OnCpuAutomationStateChanged(CpuAutomationState state)
         => _bridge?.PushEvent("cpuAutomationStateChanged", state);
@@ -307,12 +346,18 @@ public partial class WidgetWindow : Window
 
     protected override void OnClosed(EventArgs e)
     {
+        _closed = true;
+        _visible = false;
         _hwndSource?.RemoveHook(WndProc);
         _hwndSource = null;
         _app.Monitor.MetricsUpdated -= OnMetricsUpdated;
         _app.ActivePlanChanged -= OnActivePlanChanged;
         _app.CpuAutomationStateChanged -= OnCpuAutomationStateChanged;
         _app.Awake.StateChanged -= OnKeepAwakeStateChanged;
+        _bridge?.Dispose();
+        _bridge = null;
+        try { WebView.Dispose(); }
+        catch (Exception ex) { Logger.Warn("Widget WebView disposal failed: " + ex.Message); }
         base.OnClosed(e);
     }
 
