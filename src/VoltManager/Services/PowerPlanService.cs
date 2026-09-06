@@ -299,12 +299,6 @@ public class PowerPlanService
     internal string ExecutePowercfg(string args) => _runPowercfg(args);
 
     /// <summary>Actual GUID on this machine: mapped duplicate if present, else canonical.</summary>
-    public string TargetGuid(PlanId plan)
-    {
-        lock (_sync)
-            return TargetGuidLocked(plan);
-    }
-
     private string TargetGuidLocked(PlanId plan)
     {
         if (_settings.Current.PlanGuidMap.TryGetValue(plan.ToString(), out var mapped) &&

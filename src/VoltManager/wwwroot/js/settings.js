@@ -1212,16 +1212,6 @@
         autoUpdatesWired = true;
     }
 
-    function normalizeAutoShutdownSettings(settings) {
-        if (!settings.autoShutdown) {
-            settings.autoShutdown = { enabled: false, action: 'shutdown', time: '23:00', lastTriggeredLocalDate: null };
-        }
-        if (!/^[0-9]{2}:[0-9]{2}$/.test(settings.autoShutdown.time || '')) {
-            settings.autoShutdown.time = '23:00';
-        }
-        return settings.autoShutdown;
-    }
-
     function normalizePowerSourcePlan(settings) {
         if (!settings.powerSourcePlan) {
             settings.powerSourcePlan = { enabled: true, pluggedPlan: 'performance', unpluggedMode: 'previous' };
@@ -1252,41 +1242,8 @@
     }
 
     function setFontUi(font) {
-        var normalized = 'inter';
-        var stack = 'Inter, system-ui, -apple-system, sans-serif';
-        if (window.VoltFont && VoltFont.apply) {
-            normalized = VoltFont.apply(font);
-            stack = (VoltFont.stackFor && VoltFont.stackFor(normalized))
-                || document.documentElement.style.getPropertyValue('--vm-font-family')
-                || stack;
-        } else {
-            const map = {
-                'inter': 'Inter, system-ui, -apple-system, sans-serif',
-                'segoe-ui': '"Segoe UI", system-ui, -apple-system, sans-serif',
-                'arial': 'Arial, Helvetica, sans-serif',
-                'calibri': 'Calibri, Candara, "Segoe UI", sans-serif',
-                'verdana': 'Verdana, Geneva, sans-serif',
-                'tahoma': 'Tahoma, Verdana, sans-serif',
-                'trebuchet-ms': '"Trebuchet MS", Arial, sans-serif',
-                'candara': 'Candara, Calibri, "Segoe UI", sans-serif',
-                'corbel': 'Corbel, "Segoe UI", sans-serif',
-                'century-gothic': '"Century Gothic", Arial, sans-serif',
-                'franklin-gothic': '"Franklin Gothic Medium", "Arial Narrow", Arial, sans-serif',
-                'georgia': 'Georgia, serif',
-                'cambria': 'Cambria, Georgia, serif',
-                'palatino-linotype': '"Palatino Linotype", Palatino, Georgia, serif',
-                'times-new-roman': '"Times New Roman", Times, serif',
-                'consolas': 'Consolas, "Courier New", monospace',
-                'courier-new': '"Courier New", Courier, monospace',
-                'lucida-console': '"Lucida Console", Monaco, monospace'
-            };
-            var key = (font && typeof font === 'string') ? font.trim().toLowerCase() : 'inter';
-            normalized = map[key] ? key : 'inter';
-            stack = map[normalized];
-            document.documentElement.style.setProperty('--vm-font-family', stack);
-            document.documentElement.style.fontFamily = stack;
-            if (document.body) document.body.style.fontFamily = stack;
-        }
+        let normalized = VoltFont.apply(font);
+        const stack = VoltFont.stackFor(normalized);
 
         const select = document.getElementById('font-select');
         if (select) {
@@ -1305,79 +1262,6 @@
         }
         return normalized;
     }
-
-    function mountAutoShutdownUi() {
-        if (document.getElementById('auto-shutdown-panel')) return;
-        const prefs = document.getElementById('pref-tray')?.parentElement;
-        if (!prefs) return;
-
-        prefs.insertAdjacentHTML('beforeend',
-            '<div class="space-y-sm pt-md border-t border-white/10" id="auto-shutdown-panel">' +
-            '  <div class="flex items-center justify-between group">' +
-            '    <div>' +
-            '      <p class="text-body-md text-on-surface group-hover:text-secondary-fixed transition-colors" data-i18n="set_pref_autoshutdown">Autospegnimento</p>' +
-            '      <p class="text-label-sm text-on-surface-variant" data-i18n="set_pref_autoshutdown_sub">Spegne il PC all\'orario indicato, se è acceso</p>' +
-            '    </div>' +
-            '    <div class="mini-toggle cursor-pointer" data-on="false" id="toggle-auto-shutdown"><div class="mini-toggle-knob"></div></div>' +
-            '  </div>' +
-            '  <label class="flex items-center justify-between gap-md" for="auto-shutdown-time">' +
-            '    <span class="text-label-sm text-on-surface-variant" data-i18n="set_pref_autoshutdown_time">Orario</span>' +
-            '    <input id="auto-shutdown-time" type="time" class="bg-surface-container-low/50 text-secondary-container font-medium border border-white/10 rounded-lg py-2 px-3 text-body-md focus:outline-none focus:border-secondary-container transition-all duration-300" />' +
-            '  </label>' +
-            '  <p class="text-label-sm text-on-surface-variant opacity-70" data-i18n="set_pref_autoshutdown_note">Non forza la chiusura delle app con lavoro non salvato.</p>' +
-            '</div>');
-        if (window.I18n && I18n.apply) I18n.apply();
-    }
-
-    function setAutoShutdownUi(autoShutdown) {
-        const toggle = document.getElementById('toggle-auto-shutdown');
-        const timeInput = document.getElementById('auto-shutdown-time');
-        if (!toggle || !timeInput) return;
-
-        setToggle(toggle, autoShutdown.enabled);
-        timeInput.value = autoShutdown.time;
-        timeInput.disabled = !autoShutdown.enabled;
-        timeInput.classList.toggle('opacity-50', !autoShutdown.enabled);
-    }
-
-    function wireAutoShutdownUi() {
-        const toggle = document.getElementById('toggle-auto-shutdown');
-        const timeInput = document.getElementById('auto-shutdown-time');
-        if (!toggle || !timeInput || !window.__voltSettings || toggle.dataset.wired === 'true') return;
-        toggle.dataset.wired = 'true';
-        timeInput.dataset.wired = 'true';
-
-        toggle.addEventListener('click', () => {
-            const settings = window.__voltSettings.get ? window.__voltSettings.get() : window.__voltSettings;
-            const autoShutdown = normalizeAutoShutdownSettings(settings);
-            autoShutdown.enabled = toggle.dataset.on !== 'true';
-            setAutoShutdownUi(autoShutdown);
-            if (window.__voltSettings.save) window.__voltSettings.save();
-        });
-
-        timeInput.addEventListener('change', (e) => {
-            const value = e.target.value;
-            if (!/^[0-9]{2}:[0-9]{2}$/.test(value)) return;
-            const settings = window.__voltSettings.get ? window.__voltSettings.get() : window.__voltSettings;
-            const autoShutdown = normalizeAutoShutdownSettings(settings);
-            autoShutdown.time = value;
-            setAutoShutdownUi(autoShutdown);
-            if (window.__voltSettings.save) window.__voltSettings.save();
-        });
-    }
-
-    function checkBatteryPresence() {
-        const info = window.VoltSystemInfo;
-        if (info) {
-            applyBatteryPresence(info.hasBattery);
-        } else {
-            document.addEventListener('systeminfoloaded', (e) => {
-                applyBatteryPresence(e.detail.hasBattery);
-            });
-        }
-    }
-
-    function applyBatteryPresence() { /* power-source plan lives on Home only */ }
 
     const hotkeyFields = [
         ['powerSaver', 'hotkeySaver'],
@@ -1520,17 +1404,11 @@
         setToggle(toggleTray, settings.closeToTray);
         mountGlobalHotkeysUi(settings);
 
-        checkBatteryPresence();
-
         mountAutoUpdateUi();
         const autoUpdates = normalizeAutoUpdates(settings);
         syncAutoUpdateToggles(autoUpdates);
         setChannelUi(autoUpdates.updateChannel);
         wireAutoUpdateUi();
-
-        mountAutoShutdownUi();
-        setAutoShutdownUi(normalizeAutoShutdownSettings(settings));
-        wireAutoShutdownUi();
 
         mountWidgetsUi();
         renderWidgetsState(normalizeWidgetsState(settings.widgets));

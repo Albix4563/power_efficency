@@ -115,63 +115,6 @@ namespace VoltManager.Setup.Engine
                 Process.Start(new ProcessStartInfo(exe, "--updated") { UseShellExecute = true });
         }
 
-        public async Task<UninstallResult> UninstallAsync(string? targetDir = null, CancellationToken ct = default)
-        {
-            var result = new UninstallResult();
-            string dir = ResolveInstallDir(targetDir);
-
-            Report(I18n.T("status_uninst_kill"), 5);
-            if (!StopRunningInstalledProcesses(dir))
-                result.Add("VoltManager process still running");
-            await Task.Delay(400, ct);
-
-            Report(I18n.T("status_uninst_files"), 20);
-            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-            {
-                if (IsRunningFromDirectory(dir))
-                {
-                    result.Add("Uninstaller is still running from the install directory");
-                }
-                else if (!TryDeleteDirectoryTree(dir, out string filesErr))
-                {
-                    result.Add("Install directory: " + filesErr);
-                }
-            }
-
-            Report(I18n.T("status_uninst_files"), 45);
-            string appData = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), AppName);
-            if (Directory.Exists(appData) && !TryDeleteDirectoryTree(appData, out string appDataErr))
-                result.Add("AppData: " + appDataErr);
-
-            Report(I18n.T("status_startup"), 60);
-            try { RunSchtasks($"/delete /f /tn \"{STARTUP_TASK}\""); }
-            catch (Exception ex) { result.Add("Startup task delete: " + ex.Message); }
-            if (StartupTaskExists())
-                result.Add("Startup task still present: " + STARTUP_TASK);
-
-            Report(I18n.T("status_uninst_files"), 75);
-            try { RemoveShortcuts(); }
-            catch (Exception ex) { result.Add("Shortcuts: " + ex.Message); }
-            if (ShortcutsRemain(out string shortcutLeft))
-                result.Add("Shortcuts still present: " + shortcutLeft);
-
-            Report(I18n.T("status_uninst_reg"), 90);
-            try { Registry.LocalMachine.DeleteSubKey(ARP_KEY, false); }
-            catch (Exception ex) { result.Add("ARP delete: " + ex.Message); }
-            try { Registry.LocalMachine.DeleteSubKey(INNO_ARP_KEY, false); } catch { /* legacy best-effort */ }
-            if (ArpKeyExists())
-                result.Add("ARP entry still present");
-
-            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
-                result.Add("Install directory still exists: " + dir);
-            if (Directory.Exists(appData))
-                result.Add("AppData still exists: " + appData);
-
-            Report("", 100);
-            return result;
-        }
-
         public static string ResolveInstallDir(string? targetDir = null)
         {
             if (!string.IsNullOrWhiteSpace(targetDir) && Directory.Exists(targetDir))
@@ -278,7 +221,7 @@ namespace VoltManager.Setup.Engine
 
         // ── Private helpers ──────────────────────────────────────────────────
 
-        private void Report(string msg, double pct) => Progress?.Invoke(msg, pct);
+        protected void Report(string msg, double pct) => Progress?.Invoke(msg, pct);
 
         private static bool StopProcessesForInstall(string installDir)
         {
@@ -352,12 +295,6 @@ namespace VoltManager.Setup.Engine
             return false;
         }
 
-        private static bool IsRunningFromDirectory(string dir)
-        {
-            string self = Assembly.GetExecutingAssembly().Location;
-            return !string.IsNullOrEmpty(self) && IsPathUnder(self, dir);
-        }
-
         private static bool IsPathUnder(string path, string directory)
         {
             string fullPath = Path.GetFullPath(path);
@@ -365,46 +302,6 @@ namespace VoltManager.Setup.Engine
                 .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
                 + Path.DirectorySeparatorChar;
             return fullPath.StartsWith(fullDir, StringComparison.OrdinalIgnoreCase);
-        }
-
-        private static bool StartupTaskExists()
-        {
-            try
-            {
-                var p = Process.Start(new ProcessStartInfo("schtasks", $"/query /tn \"{STARTUP_TASK}\"")
-                {
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                })!;
-                p.WaitForExit(10_000);
-                return p.ExitCode == 0;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static bool ShortcutsRemain(out string remaining)
-        {
-            var left = new List<string>();
-            string startDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), AppName);
-            if (Directory.Exists(startDir)) left.Add(startDir);
-
-            string desktop = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-                AppName + ".lnk");
-            if (File.Exists(desktop)) left.Add(desktop);
-
-            remaining = string.Join(", ", left);
-            return left.Count > 0;
-        }
-
-        private static bool ArpKeyExists()
-        {
-            using var k = Registry.LocalMachine.OpenSubKey(ARP_KEY);
-            return k != null;
         }
 
         private static string QuoteArg(string value)
@@ -538,18 +435,6 @@ namespace VoltManager.Setup.Engine
                 string desktop = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory);
                 CreateShortcut(Path.Combine(desktop, AppName + ".lnk"), exe, opts.InstallDir);
             }
-        }
-
-        private static void RemoveShortcuts()
-        {
-            string startDir = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonPrograms), AppName);
-            if (Directory.Exists(startDir)) Directory.Delete(startDir, true);
-
-            string desktop = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory),
-                AppName + ".lnk");
-            if (File.Exists(desktop)) File.Delete(desktop);
         }
 
         [ComImport, Guid("00021401-0000-0000-C000-000000000046")]

@@ -15,7 +15,7 @@ namespace VoltManager.Setup.Windows
     {
         private readonly SetupArgs _args;
         private readonly InstallOptions _opts = new InstallOptions();
-        private readonly InstallEngine _engine = new InstallEngine();
+        private readonly HardenedInstallEngine _engine = new HardenedInstallEngine();
         private WelcomePage? _welcome;
         private OptionsPage? _options;
         private ProgressPage? _progress;

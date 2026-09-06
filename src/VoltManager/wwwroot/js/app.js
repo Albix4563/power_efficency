@@ -820,11 +820,6 @@
         }).join('');
     }
 
-    function removeLegacyAutoShutdownPanel() {
-        const panel = document.getElementById('auto-shutdown-panel');
-        if (panel) panel.remove();
-    }
-
     navList.addEventListener('click', (e) => {
         const link = e.target.closest('a[data-view]');
         if (!link || !navList.contains(link)) return;
@@ -1023,7 +1018,6 @@
     document.addEventListener('settingsloaded', () => {
         mountSystemTab();
         renderMonitoringState();
-        setTimeout(removeLegacyAutoShutdownPanel, 0);
     });
 
     document.addEventListener('viewchange', (e) => {
@@ -1040,6 +1034,4 @@
         if (startupLoaded) loadStartupApps(true);
     });
 
-    const observer = new MutationObserver(removeLegacyAutoShutdownPanel);
-    observer.observe(document.body, { childList: true, subtree: true });
 })();

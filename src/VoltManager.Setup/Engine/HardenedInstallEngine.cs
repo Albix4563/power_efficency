@@ -11,30 +11,16 @@ using VoltManager.Services;
 namespace VoltManager.Setup.Engine
 {
     /// <summary>
-    /// Keeps the existing install/update engine intact while replacing only the
-    /// uninstall path with a verified, zero-residue lifecycle.
+    /// Adds the verified uninstall lifecycle to the shared install/update engine.
     /// </summary>
-    public class HardenedInstallEngine : InstallEngine
+    public sealed class HardenedInstallEngine : InstallEngine
     {
         private static readonly TimeSpan GracefulShutdownTimeout = TimeSpan.FromSeconds(6);
         private static readonly TimeSpan HardwareParentExitTimeout = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan ForcedShutdownVerificationTimeout = TimeSpan.FromSeconds(3);
         private static readonly TimeSpan ProcessPollInterval = TimeSpan.FromMilliseconds(150);
 
-        public HardenedInstallEngine()
-        {
-            base.Progress += ForwardBaseProgress;
-        }
-
-        public new event Action<string, double>? Progress;
-
-        public new Task InstallAsync(InstallOptions opts, string version, CancellationToken ct = default)
-            => base.InstallAsync(opts, version, ct);
-
-        public new Task UpdateAsync(int waitPid, string version, CancellationToken ct = default)
-            => base.UpdateAsync(waitPid, version, ct);
-
-        public new async Task<UninstallResult> UninstallAsync(string? targetDir = null, CancellationToken ct = default)
+        public async Task<UninstallResult> UninstallAsync(string? targetDir = null, CancellationToken ct = default)
         {
             var result = new UninstallResult();
             string installDir = ResolveInstallDir(targetDir);
@@ -128,12 +114,6 @@ namespace VoltManager.Setup.Engine
                 // already removed every other owned artifact.
             }
         }
-
-        private void ForwardBaseProgress(string message, double progress)
-            => Progress?.Invoke(message, progress);
-
-        private void Report(string message, double progress)
-            => Progress?.Invoke(message, progress);
 
         private static async Task<bool> StopRunningInstalledProcessesAsync(string installDir, CancellationToken ct)
         {

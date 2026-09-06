@@ -85,7 +85,7 @@ namespace VoltManager.Setup
             int exit = 0;
             try
             {
-                var result = await new InstallEngine().UninstallAsync(args.TargetDir);
+                var result = await new HardenedInstallEngine().UninstallAsync(args.TargetDir);
                 if (!result.Success) exit = 1;
             }
             catch
