@@ -1,0 +1,193 @@
+name: Cleanup obsolete code
+
+on:
+  push:
+    branches: [Dev]
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Apply cleanup
+        shell: pwsh
+        run: |
+          @'
+          from pathlib import Path
+          import re
+
+          def edit(path, transform):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              result = transform(text)
+              if result == text:
+                  raise RuntimeError(f'No change produced for {path}')
+              p.write_text(result, encoding='utf-8')
+
+          def cut(text, start, end):
+              if text.count(start) != 1:
+                  raise RuntimeError(f'Expected one start marker, got {text.count(start)}: {start}')
+              a = text.index(start)
+              b = text.index(end, a)
+              return text[:a] + text[b:]
+
+          def clean_engine(text):
+              text = cut(text, '        public async Task<UninstallResult> UninstallAsync(', '        public static string ResolveInstallDir(')
+              text = cut(text, '        private static bool IsRunningFromDirectory(', '        private static bool IsPathUnder(')
+              text = cut(text, '        private static bool StartupTaskExists(', '        private static string QuoteArg(')
+              text = cut(text, '        private static void RemoveShortcuts()', '        [ComImport, Guid(')
+              old = '        private void Report(string msg, double pct) => Progress?.Invoke(msg, pct);'
+              new = '        protected void Report(string msg, double pct) => Progress?.Invoke(msg, pct);'
+              if old not in text:
+                  raise RuntimeError('InstallEngine.Report marker not found')
+              return text.replace(old, new, 1)
+
+          edit('src/VoltManager.Setup/Engine/InstallEngine.cs', clean_engine)
+
+          def clean_hardened(text):
+              text = text.replace(
+                  '    /// Keeps the existing install/update engine intact while replacing only the\n    /// uninstall path with a verified, zero-residue lifecycle.',
+                  '    /// Adds the verified uninstall lifecycle to the shared install/update engine.')
+              if 'public class HardenedInstallEngine' not in text:
+                  raise RuntimeError('HardenedInstallEngine class marker not found')
+              text = text.replace('public class HardenedInstallEngine', 'public sealed class HardenedInstallEngine', 1)
+              text = cut(text, '        public HardenedInstallEngine()', '        public new async Task<UninstallResult> UninstallAsync(')
+              text = text.replace('public new async Task<UninstallResult>', 'public async Task<UninstallResult>', 1)
+              return cut(text, '        private void ForwardBaseProgress(', '        private static async Task<bool> StopRunningInstalledProcessesAsync(')
+
+          edit('src/VoltManager.Setup/Engine/HardenedInstallEngine.cs', clean_hardened)
+
+          def replace_once(text, old, new, label):
+              if text.count(old) != 1:
+                  raise RuntimeError(f'{label}: expected one occurrence, got {text.count(old)}')
+              return text.replace(old, new, 1)
+
+          edit(
+              'src/VoltManager.Setup/App.xaml.cs',
+              lambda t: replace_once(t, 'new InstallEngine().UninstallAsync', 'new HardenedInstallEngine().UninstallAsync', 'silent uninstall engine'))
+          edit(
+              'src/VoltManager.Setup/Windows/SetupWindow.xaml.cs',
+              lambda t: replace_once(t, 'private readonly InstallEngine _engine = new InstallEngine();', 'private readonly HardenedInstallEngine _engine = new HardenedInstallEngine();', 'setup window engine'))
+
+          def clean_settings(text):
+              text = cut(text, '    function normalizeAutoShutdownSettings(', '    function normalizePowerSourcePlan(')
+              a = text.index('    function setFontUi(font) {')
+              b = text.index("        const select = document.getElementById('font-select');", a)
+              text = text[:a] + "    function setFontUi(font) {\n        let normalized = VoltFont.apply(font);\n        const stack = VoltFont.stackFor(normalized);\n\n" + text[b:]
+              text = cut(text, '    function mountAutoShutdownUi()', '    const hotkeyFields = [')
+              text = text.replace('        checkBatteryPresence();\n\n', '', 1)
+              old = '        mountAutoShutdownUi();\n        setAutoShutdownUi(normalizeAutoShutdownSettings(settings));\n        wireAutoShutdownUi();\n\n'
+              if old not in text:
+                  raise RuntimeError('auto-shutdown settingsloaded block not found')
+              return text.replace(old, '', 1)
+
+          edit('src/VoltManager/wwwroot/js/settings.js', clean_settings)
+
+          def clean_app(text):
+              old_fn = "    function removeLegacyAutoShutdownPanel() {\n        const panel = document.getElementById('auto-shutdown-panel');\n        if (panel) panel.remove();\n    }\n\n"
+              if old_fn not in text:
+                  raise RuntimeError('legacy auto-shutdown remover not found')
+              text = text.replace(old_fn, '', 1)
+              text = text.replace('        setTimeout(removeLegacyAutoShutdownPanel, 0);\n', '', 1)
+              observer = '\n    const observer = new MutationObserver(removeLegacyAutoShutdownPanel);\n    observer.observe(document.body, { childList: true, subtree: true });\n'
+              if observer not in text:
+                  raise RuntimeError('legacy auto-shutdown observer not found')
+              return text.replace(observer, '\n', 1)
+
+          edit('src/VoltManager/wwwroot/js/app.js', clean_app)
+
+          def clean_i18n(text):
+              result, count = re.subn(r'^.*"set_pref_autoshutdown[^"\n]*":.*\n', '', text, flags=re.M)
+              if count != 16:
+                  raise RuntimeError(f'Expected 16 auto-shutdown translations, removed {count}')
+              return result
+
+          edit('src/VoltManager/wwwroot/js/i18n.js', clean_i18n)
+          edit(
+              'src/VoltManager/Services/PowerPlanService.cs',
+              lambda t: cut(t, '    public string TargetGuid(PlanId plan)', '    private string TargetGuidLocked('))
+
+          alias = Path('src/VoltManager.Setup/HardenedInstallEngineAliases.cs')
+          if not alias.exists():
+              raise RuntimeError('HardenedInstallEngineAliases.cs not found')
+          alias.unlink()
+
+          settings = Path('src/VoltManager/wwwroot/js/settings.js').read_text(encoding='utf-8')
+          app = Path('src/VoltManager/wwwroot/js/app.js').read_text(encoding='utf-8')
+          i18n = Path('src/VoltManager/wwwroot/js/i18n.js').read_text(encoding='utf-8')
+          power = Path('src/VoltManager/Services/PowerPlanService.cs').read_text(encoding='utf-8')
+          engine = Path('src/VoltManager.Setup/Engine/InstallEngine.cs').read_text(encoding='utf-8')
+          hardened = Path('src/VoltManager.Setup/Engine/HardenedInstallEngine.cs').read_text(encoding='utf-8')
+          index = Path('src/VoltManager/wwwroot/index.html').read_text(encoding='utf-8')
+
+          for token in ('normalizeAutoShutdownSettings', 'mountAutoShutdownUi', 'setAutoShutdownUi', 'wireAutoShutdownUi', 'checkBatteryPresence', 'applyBatteryPresence'):
+              if token in settings:
+                  raise RuntimeError(f'Residual settings token: {token}')
+          if 'removeLegacyAutoShutdownPanel' in app or 'auto-shutdown-panel' in app:
+              raise RuntimeError('Residual legacy auto-shutdown cleanup in app.js')
+          if 'set_pref_autoshutdown' in i18n:
+              raise RuntimeError('Residual auto-shutdown translation')
+          if 'public string TargetGuid(PlanId plan)' in power:
+              raise RuntimeError('Residual public TargetGuid method')
+          if 'public async Task<UninstallResult> UninstallAsync(' in engine:
+              raise RuntimeError('Legacy base uninstall method still present')
+          if 'public async Task<UninstallResult> UninstallAsync(' not in hardened:
+              raise RuntimeError('Hardened uninstall method missing')
+          if index.index('js/font.js') >= index.index('js/settings.js'):
+              raise RuntimeError('font.js must load before settings.js')
+          if "VoltFont.apply(font)" not in settings or "VoltFont.stackFor(normalized)" not in settings:
+              raise RuntimeError('settings font delegation missing')
+          '@ | Set-Content -Encoding utf8 cleanup_obsolete.py
+          python cleanup_obsolete.py
+          Remove-Item cleanup_obsolete.py
+
+      - name: Restore
+        run: dotnet restore VoltManager.sln
+
+      - name: Build
+        run: dotnet build VoltManager.sln -c Release --no-restore -v:minimal
+
+      - name: Run .NET regression tests
+        run: dotnet test tests/VoltManager.Tests/VoltManager.Tests.csproj -c Release --no-build --no-restore -v:minimal
+
+      - name: Run JavaScript regression tests
+        run: node --test tests/*.test.mjs
+
+      - name: Check JavaScript syntax
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem src/VoltManager/wwwroot/js/*.js) {
+            node --check $file.FullName
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+      - name: Check diff
+        shell: pwsh
+        run: git diff --check
+
+      - name: Commit cleanup to Dev
+        shell: pwsh
+        run: |
+          Remove-Item .github/workflows/cleanup-obsolete-code.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Remove obsolete settings and installer code"
+          git push origin HEAD:Dev
