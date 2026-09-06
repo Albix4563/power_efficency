@@ -145,11 +145,17 @@ public class PowerPlanParameterService
             acValue = Clamp(acValue, spec.Min, spec.Max);
             dcValue = Clamp(dcValue, spec.Min, spec.Max);
 
-            PowerPlanService.RunPowercfg($"/setacvalueindex {guid} {spec.Subgroup} {spec.Setting} {acValue}");
-            PowerPlanService.RunPowercfg($"/setdcvalueindex {guid} {spec.Subgroup} {spec.Setting} {dcValue}");
+            _power.ExecutePowercfg($"/setacvalueindex {guid} {spec.Subgroup} {spec.Setting} {acValue}");
+            _power.ExecutePowercfg($"/setdcvalueindex {guid} {spec.Subgroup} {spec.Setting} {dcValue}");
 
             if (string.Equals(GetActivePlanGuid(), guid, StringComparison.OrdinalIgnoreCase))
-                PowerPlanService.RunPowercfg($"/setactive {guid}");
+            {
+                _power.ReapplyPlan(guid, new PlanChangeContext(
+                    PlanHistoryCategory.Manual,
+                    "advancedParameters",
+                    "parameters_reapply",
+                    new Dictionary<string, string> { ["setting"] = settingKey }));
+            }
 
             // Verify instead of assuming that powercfg accepted the setting.
             var updated = QueryIndexes(guid, spec.Subgroup, spec.Setting);
@@ -186,7 +192,7 @@ public class PowerPlanParameterService
 
     private SettingIndexes QueryIndexes(string planGuid, string subgroup, string setting)
     {
-        string output = PowerPlanService.RunPowercfg($"/qh {planGuid} {subgroup} {setting}");
+        string output = _power.ExecutePowercfg($"/qh {planGuid} {subgroup} {setting}");
         return TryParseCurrentIndexes(output, out int ac, out int dc)
             ? new SettingIndexes(ac, dc, true)
             : new SettingIndexes(0, 0, false);

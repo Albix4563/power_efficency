@@ -22,10 +22,16 @@ public class PowerPlanService
     private readonly SettingsService _settings;
     private readonly Func<Guid?> _readActiveScheme;
     private readonly Func<string, string> _runPowercfg;
+    private readonly ISystemClock _clock;
+    private readonly object _sync = new();
+    private PowerPlan? _lastObserved;
+    private string? _pendingUnverifiedGuid;
     private bool _activeSchemeReadFaulted;
 
+    public PlanHistoryService History { get; }
+
     public PowerPlanService(SettingsService settings)
-        : this(settings, ReadActiveScheme, RunPowercfg)
+        : this(settings, ReadActiveScheme, RunPowercfg, new PlanHistoryService(), new SystemClock())
     {
     }
 
@@ -33,10 +39,22 @@ public class PowerPlanService
         SettingsService settings,
         Func<Guid?> readActiveScheme,
         Func<string, string> runPowercfg)
+        : this(settings, readActiveScheme, runPowercfg, new PlanHistoryService(), new SystemClock())
+    {
+    }
+
+    internal PowerPlanService(
+        SettingsService settings,
+        Func<Guid?> readActiveScheme,
+        Func<string, string> runPowercfg,
+        PlanHistoryService history,
+        ISystemClock clock)
     {
         _settings = settings;
         _readActiveScheme = readActiveScheme;
         _runPowercfg = runPowercfg;
+        History = history;
+        _clock = clock;
     }
 
     [DllImport("powrprof.dll")]
@@ -153,9 +171,22 @@ public class PowerPlanService
     }
 
     public List<PowerPlan> ListPlans()
-        => ParseListOutput(RunPowercfg("/list"), _settings.Current.PlanGuidMap);
+    {
+        lock (_sync)
+            return ParseListOutput(_runPowercfg("/list"), _settings.Current.PlanGuidMap);
+    }
 
     public PowerPlan? GetActivePlan()
+    {
+        var revisions = new List<long>(1);
+        PowerPlan? current;
+        lock (_sync)
+            current = ObserveActivePlanLocked(revisions);
+        PublishHistoryChanges(revisions);
+        return current;
+    }
+
+    private PowerPlan? ReadActivePlanLocked()
     {
         try
         {
@@ -205,47 +236,187 @@ public class PowerPlanService
     /// </summary>
     public bool RestoreDefaultPlans()
     {
-        var (_, missing) = CheckDefaultPlans();
-        bool ok = true;
-        foreach (var pid in missing)
+        lock (_sync)
         {
-            string canonical = GuidFor(pid);
-            var output = RunPowercfg($"-duplicatescheme {canonical}");
-            var m = GuidRegex.Match(output);
-            if (m.Success)
+            var plans = ParseListOutput(_runPowercfg("/list"), _settings.Current.PlanGuidMap);
+            var present = plans.Where(p => p.PlanId != null).Select(p => p.PlanId!.Value).ToHashSet();
+            var missing = Enum.GetValues<PlanId>().Where(pid => !present.Contains(pid)).ToList();
+            bool ok = true;
+            foreach (var pid in missing)
             {
-                _settings.Current.PlanGuidMap[pid.ToString()] = m.Groups["guid"].Value.ToLowerInvariant();
+                string canonical = GuidFor(pid);
+                var output = _runPowercfg($"-duplicatescheme {canonical}");
+                var m = GuidRegex.Match(output);
+                if (m.Success)
+                    _settings.Current.PlanGuidMap[pid.ToString()] = m.Groups["guid"].Value.ToLowerInvariant();
+                else
+                    ok = false;
             }
-            else
-            {
-                ok = false;
-            }
+            if (ok) _settings.Save();
+            return ok;
         }
-        if (ok) _settings.Save();
-        return ok;
     }
 
-    public bool SetActivePlan(PlanId plan)
+    public bool SetActivePlan(PlanId plan, PlanChangeContext? context = null)
     {
-        string guid = TargetGuid(plan);
-        RunPowercfg($"/setactive {guid}");
-        var active = GetActivePlan();
-        return active != null && active.Guid.Equals(guid, StringComparison.OrdinalIgnoreCase);
+        var revisions = new List<long>(2);
+        bool success;
+        lock (_sync)
+        {
+            string guid = TargetGuidLocked(plan);
+            success = ApplyPlanLocked(
+                guid,
+                plan,
+                context ?? new PlanChangeContext(
+                    PlanHistoryCategory.Manual,
+                    "manual",
+                    "manual_selection",
+                    new Dictionary<string, string>()),
+                forceIfUnchanged: false,
+                revisions);
+        }
+        PublishHistoryChanges(revisions);
+        return success;
     }
+
+    internal bool ReapplyPlan(string guid, PlanChangeContext context)
+    {
+        var revisions = new List<long>(2);
+        bool success;
+        lock (_sync)
+        {
+            success = ApplyPlanLocked(
+                guid.ToLowerInvariant(),
+                ResolvePlanId(guid, _settings.Current.PlanGuidMap),
+                context,
+                forceIfUnchanged: true,
+                revisions);
+        }
+        PublishHistoryChanges(revisions);
+        return success;
+    }
+
+    internal string ExecutePowercfg(string args) => _runPowercfg(args);
 
     /// <summary>Actual GUID on this machine: mapped duplicate if present, else canonical.</summary>
     public string TargetGuid(PlanId plan)
+    {
+        lock (_sync)
+            return TargetGuidLocked(plan);
+    }
+
+    private string TargetGuidLocked(PlanId plan)
     {
         if (_settings.Current.PlanGuidMap.TryGetValue(plan.ToString(), out var mapped) &&
             !string.IsNullOrWhiteSpace(mapped))
         {
             // Verify mapped guid still exists; fall back to canonical otherwise.
-            var existing = ParseListOutput(RunPowercfg("/list"));
+            var existing = ParseListOutput(_runPowercfg("/list"));
             if (existing.Any(p => p.Guid.Equals(mapped, StringComparison.OrdinalIgnoreCase)))
                 return mapped;
         }
         return GuidFor(plan);
     }
+
+    private bool ApplyPlanLocked(
+        string requestedGuid,
+        PlanId? requestedPlanId,
+        PlanChangeContext context,
+        bool forceIfUnchanged,
+        List<long> revisions)
+    {
+        var current = ObserveActivePlanLocked(revisions);
+        var previous = current ?? _lastObserved;
+        var requested = new PlanHistoryPlan(requestedGuid, requestedPlanId?.ToString() ?? "", requestedPlanId);
+
+        if (!forceIfUnchanged && current != null && SameGuid(current.Guid, requestedGuid))
+            return true;
+
+        _runPowercfg($"/setactive {requestedGuid}");
+        var observed = ReadActivePlanLocked();
+        var timestamp = _clock.UtcNow;
+
+        if (observed == null)
+        {
+            _pendingUnverifiedGuid = requestedGuid;
+            revisions.Add(History.Record(
+                timestamp,
+                context,
+                ToHistoryPlan(previous),
+                requested,
+                null,
+                PlanHistoryOutcome.Unverifiable));
+            return false;
+        }
+
+        _pendingUnverifiedGuid = null;
+        _lastObserved = observed;
+        if (SameGuid(observed.Guid, requestedGuid))
+        {
+            if (previous == null || !SameGuid(previous.Guid, requestedGuid))
+            {
+                revisions.Add(History.Record(
+                    timestamp,
+                    context,
+                    ToHistoryPlan(previous),
+                    requested,
+                    ToHistoryPlan(observed),
+                    PlanHistoryOutcome.Applied));
+            }
+            return true;
+        }
+
+        revisions.Add(History.Record(
+            timestamp,
+            context,
+            ToHistoryPlan(previous),
+            requested,
+            ToHistoryPlan(observed),
+            PlanHistoryOutcome.Failed));
+        return false;
+    }
+
+    private PowerPlan? ObserveActivePlanLocked(List<long> revisions)
+    {
+        var current = ReadActivePlanLocked();
+        if (current == null)
+            return null;
+
+        bool explainedByUnverifiedRequest = _pendingUnverifiedGuid != null &&
+            (SameGuid(_pendingUnverifiedGuid, current.Guid) ||
+             (_lastObserved != null && SameGuid(_lastObserved.Guid, current.Guid)));
+        _pendingUnverifiedGuid = null;
+
+        if (!explainedByUnverifiedRequest && _lastObserved != null && !SameGuid(_lastObserved.Guid, current.Guid))
+        {
+            revisions.Add(History.Record(
+                _clock.UtcNow,
+                new PlanChangeContext(
+                    PlanHistoryCategory.External,
+                    "external",
+                    "external_change_detected",
+                    new Dictionary<string, string>()),
+                ToHistoryPlan(_lastObserved),
+                null,
+                ToHistoryPlan(current),
+                PlanHistoryOutcome.ExternalDetected));
+        }
+
+        _lastObserved = current;
+        return current;
+    }
+
+    private void PublishHistoryChanges(IEnumerable<long> revisions)
+    {
+        foreach (var revision in revisions)
+            History.PublishChanged(revision);
+    }
+
+    private static PlanHistoryPlan? ToHistoryPlan(PowerPlan? plan)
+        => plan == null ? null : new PlanHistoryPlan(plan.Guid, plan.Name, plan.PlanId);
+
+    private static bool SameGuid(string a, string b)
+        => a.Equals(b, StringComparison.OrdinalIgnoreCase);
 
     public static string GuidFor(PlanId plan) => plan switch
     {

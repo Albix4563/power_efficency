@@ -102,7 +102,15 @@
         },
         on(eventName, handler) {
             if (!listeners.has(eventName)) listeners.set(eventName, []);
-            listeners.get(eventName).push(handler);
+            const handlers = listeners.get(eventName);
+            handlers.push(handler);
+            return () => {
+                const current = listeners.get(eventName);
+                if (!current) return;
+                const index = current.indexOf(handler);
+                if (index >= 0) current.splice(index, 1);
+                if (!current.length) listeners.delete(eventName);
+            };
         },
         /**
          * Surfaces a user-initiated host failure on an existing status hook.

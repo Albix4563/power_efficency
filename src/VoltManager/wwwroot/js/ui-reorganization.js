@@ -150,6 +150,7 @@
         move($('pref-power-source-plan-home'), $('vm-power-source'), true);
         move($('pref-low-battery-threshold-home'), $('vm-power-source'), true);
         move($('keep-awake-mount'), $('vm-keep-awake'));
+        move($('plan-history-mount'), $('vm-power-history'));
         move($('advanced-params-mount'), $('vm-power-advanced'));
 
         const ruleItem = document.querySelector('.vm-acc-item[data-pm="rules"]');

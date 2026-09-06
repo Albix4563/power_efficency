@@ -64,6 +64,7 @@ Non serve essere esperti di sistemi: le funzioni automatiche sono opzionali e si
 **Controllo energia**
 
 - **Piani rapidi** — Risparmio, Bilanciato e Prestazioni dalla Home, dall’icona nell’area di notifica o dalla jump list della barra delle applicazioni.
+- **Cronologia cambi piano** — mostra fino agli ultimi 500 eventi della sessione con origine, motivo ed esito, inclusi cambi automatici, manuali, esterni e tentativi non riusciti. La cronologia resta disponibile quando la finestra è nell’area di notifica e si azzera quando VoltManager viene chiuso o riavviato.
 - **Comportamento su alimentazione / batteria** — regole separate per quando sei collegato alla corrente e quando sei a batteria.
 - **Modalità gaming** — mantiene le prestazioni elevate e ti propone di tornare alla modalità automatica quando il carico cala.
 - **Mantieni PC attivo** — evita sospensione e spegnimento dello schermo durante film, presentazioni o attività lunghe.

@@ -18,6 +18,17 @@
     let thermalState = null;
     let idleWired = false;
     let idleState = null;
+    let planHistoryWired = false;
+    let planHistoryUnsubscribe = null;
+    const planHistoryState = {
+        entries: [],
+        revision: -1,
+        filter: 'all',
+        visibleCount: 50,
+        dirty: true,
+        loading: false,
+        error: false,
+    };
 
     const ruleIds = ['saver', 'balanced', 'performance'];
     const planIds = ['powerSaver', 'balanced', 'performance'];
@@ -478,6 +489,82 @@
         return (text[l] && text[l][key]) || (text.en && text.en[key]) || key;
     }
 
+    const historyText = {
+        it: {
+            note: 'Ultimi 500 eventi della sessione. La cronologia si azzera alla chiusura di VoltManager.',
+            clear: 'Svuota cronologia', all: 'Tutti', automatic: 'Automatici', manual: 'Manuali', external: 'Esterni', problems: 'Problemi',
+            empty: 'Nessun cambio di piano registrato in questa sessione.', noResults: 'Nessun evento corrisponde al filtro selezionato.',
+            loadError: 'Impossibile caricare la cronologia.', retry: 'Riprova', showMore: 'Mostra altre', attempts: 'tentativi',
+            applied: 'Applicato', externalDetected: 'Cambio esterno rilevato', failed: 'Fallito', unverifiable: 'Esito non verificabile',
+            previous: 'Precedente', appliedPlan: 'Applicato', requested: 'Richiesto', observed: 'Rilevato', unavailable: 'Non disponibile', customPlan: 'Piano personalizzato',
+            manualSelection: 'Selezione manuale del piano', manualOverride: 'Override manuale', gamingManual: 'Modalità gaming manuale',
+            externalChange: 'Cambio del piano rilevato da VoltManager', guardRestore: 'Protezione del piano: ripristinato il piano atteso',
+            appProfileApply: 'Profilo app: {app}', appProfileEnd: 'Fine profilo app: ripristinato il piano precedente ({app})',
+            gameLoad: 'Gioco rilevato: {app}', heavyLoad: 'Carico pesante rilevato: {app}', heavyEnd: 'Fine sessione app/gioco: ripristinato il piano precedente ({app})',
+            cpuRule: 'Regola CPU {comparison} {threshold}% per {duration} min (media {average}%)',
+            thermalTrip: 'Protezione termica intervenuta', thermalKeep: 'Protezione termica: mantenuto il piano di sicurezza', thermalRestore: 'Protezione termica terminata: ripristinato il piano precedente',
+            idleTrip: 'Inattività rilevata', idleKeep: 'Inattività persistente: ripristinato il piano previsto', idleRestore: 'Attività ripresa: ripristinato il piano precedente',
+            plugged: 'Alimentatore collegato', unplugged: 'Alimentatore scollegato: ripristinato il piano precedente', lowBattery: 'Batteria scarica: applicato il piano di risparmio', lowBatteryRestore: 'Batteria ripristinata: ripristinato il piano precedente',
+            parameters: 'Parametri avanzati modificati: riapplicato il piano attivo', generic: 'Cambio piano richiesto da VoltManager'
+        },
+        en: {
+            note: 'Last 500 events from this session. History is cleared when VoltManager closes.',
+            clear: 'Clear history', all: 'All', automatic: 'Automatic', manual: 'Manual', external: 'External', problems: 'Problems',
+            empty: 'No power-plan changes have been recorded in this session.', noResults: 'No events match the selected filter.',
+            loadError: 'Could not load history.', retry: 'Retry', showMore: 'Show more', attempts: 'attempts',
+            applied: 'Applied', externalDetected: 'External change detected', failed: 'Failed', unverifiable: 'Outcome could not be verified',
+            previous: 'Previous', appliedPlan: 'Applied', requested: 'Requested', observed: 'Observed', unavailable: 'Unavailable', customPlan: 'Custom plan',
+            manualSelection: 'Manual power-plan selection', manualOverride: 'Manual override', gamingManual: 'Manual gaming mode',
+            externalChange: 'Power-plan change detected by VoltManager', guardRestore: 'Plan protection: restored the expected plan',
+            appProfileApply: 'App profile: {app}', appProfileEnd: 'App profile ended: restored the previous plan ({app})',
+            gameLoad: 'Game detected: {app}', heavyLoad: 'Heavy load detected: {app}', heavyEnd: 'App/game session ended: restored the previous plan ({app})',
+            cpuRule: 'CPU rule {comparison} {threshold}% for {duration} min (average {average}%)',
+            thermalTrip: 'Thermal protection activated', thermalKeep: 'Thermal protection: restored the safety plan', thermalRestore: 'Thermal protection ended: restored the previous plan',
+            idleTrip: 'User inactivity detected', idleKeep: 'Inactivity persisted: restored the expected plan', idleRestore: 'Activity resumed: restored the previous plan',
+            plugged: 'AC power connected', unplugged: 'AC power disconnected: restored the previous plan', lowBattery: 'Low battery: applied the power-saving plan', lowBatteryRestore: 'Battery recovered: restored the previous plan',
+            parameters: 'Advanced parameters changed: reapplied the active plan', generic: 'Power-plan change requested by VoltManager'
+        },
+        es: {
+            note: 'Últimos 500 eventos de la sesión. El historial se borra al cerrar VoltManager.',
+            clear: 'Vaciar historial', all: 'Todos', automatic: 'Automáticos', manual: 'Manuales', external: 'Externos', problems: 'Problemas',
+            empty: 'No se han registrado cambios de plan en esta sesión.', noResults: 'Ningún evento coincide con el filtro seleccionado.',
+            loadError: 'No se pudo cargar el historial.', retry: 'Reintentar', showMore: 'Mostrar más', attempts: 'intentos',
+            applied: 'Aplicado', externalDetected: 'Cambio externo detectado', failed: 'Fallido', unverifiable: 'Resultado no verificable',
+            previous: 'Anterior', appliedPlan: 'Aplicado', requested: 'Solicitado', observed: 'Detectado', unavailable: 'No disponible', customPlan: 'Plan personalizado',
+            manualSelection: 'Selección manual del plan', manualOverride: 'Override manual', gamingManual: 'Modo gaming manual',
+            externalChange: 'Cambio de plan detectado por VoltManager', guardRestore: 'Protección del plan: restaurado el plan esperado',
+            appProfileApply: 'Perfil de app: {app}', appProfileEnd: 'Fin del perfil de app: restaurado el plan anterior ({app})',
+            gameLoad: 'Juego detectado: {app}', heavyLoad: 'Carga pesada detectada: {app}', heavyEnd: 'Fin de sesión de app/juego: restaurado el plan anterior ({app})',
+            cpuRule: 'Regla CPU {comparison} {threshold}% durante {duration} min (media {average}%)',
+            thermalTrip: 'Protección térmica activada', thermalKeep: 'Protección térmica: restaurado el plan de seguridad', thermalRestore: 'Protección térmica finalizada: restaurado el plan anterior',
+            idleTrip: 'Inactividad detectada', idleKeep: 'Inactividad persistente: restaurado el plan previsto', idleRestore: 'Actividad reanudada: restaurado el plan anterior',
+            plugged: 'Alimentador conectado', unplugged: 'Alimentador desconectado: restaurado el plan anterior', lowBattery: 'Batería baja: aplicado el plan de ahorro', lowBatteryRestore: 'Batería recuperada: restaurado el plan anterior',
+            parameters: 'Parámetros avanzados modificados: reaplicado el plan activo', generic: 'Cambio de plan solicitado por VoltManager'
+        },
+        zh: {
+            note: '本次会话最近 500 个事件。关闭 VoltManager 后历史记录会清空。',
+            clear: '清空历史记录', all: '全部', automatic: '自动', manual: '手动', external: '外部', problems: '问题',
+            empty: '本次会话尚未记录电源计划更改。', noResults: '没有符合所选筛选条件的事件。',
+            loadError: '无法加载历史记录。', retry: '重试', showMore: '显示更多', attempts: '次尝试',
+            applied: '已应用', externalDetected: '检测到外部更改', failed: '失败', unverifiable: '结果无法验证',
+            previous: '之前', appliedPlan: '已应用', requested: '请求', observed: '检测到', unavailable: '不可用', customPlan: '自定义计划',
+            manualSelection: '手动选择电源计划', manualOverride: '手动覆盖', gamingManual: '手动游戏模式',
+            externalChange: 'VoltManager 检测到电源计划更改', guardRestore: '计划保护：已恢复预期计划',
+            appProfileApply: '应用配置：{app}', appProfileEnd: '应用配置结束：已恢复之前的计划（{app}）',
+            gameLoad: '检测到游戏：{app}', heavyLoad: '检测到高负载：{app}', heavyEnd: '应用/游戏会话结束：已恢复之前的计划（{app}）',
+            cpuRule: 'CPU 规则 {comparison} {threshold}%，持续 {duration} 分钟（平均 {average}%）',
+            thermalTrip: '温度保护已触发', thermalKeep: '温度保护：已恢复安全计划', thermalRestore: '温度保护结束：已恢复之前的计划',
+            idleTrip: '检测到用户空闲', idleKeep: '持续空闲：已恢复预期计划', idleRestore: '用户恢复活动：已恢复之前的计划',
+            plugged: '已连接电源', unplugged: '已断开电源：已恢复之前的计划', lowBattery: '电量不足：已应用节能计划', lowBatteryRestore: '电量恢复：已恢复之前的计划',
+            parameters: '高级参数已修改：重新应用当前计划', generic: 'VoltManager 请求更改电源计划'
+        }
+    };
+
+    function ht(key) {
+        const l = lang();
+        return (historyText[l] && historyText[l][key]) || historyText.en[key] || key;
+    }
+
     function esc(value) {
         const div = document.createElement('div');
         div.textContent = value == null ? '' : String(value);
@@ -748,7 +835,28 @@
 .vm-acc-body-inner{overflow:hidden;min-height:0;padding:0 24px;transition:padding .32s cubic-bezier(.4,0,.2,1);}
 .vm-acc-item[data-open="true"] .vm-acc-body-inner{padding:0 24px 24px;}
 .heavy-app-panel-inner,.keep-awake-panel-inner{position:relative;}
+.plan-history-shell{display:grid;gap:14px;min-width:0;}
+.plan-history-toolbar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px;}
+.plan-history-filters{display:flex;flex-wrap:wrap;gap:7px;min-width:0;}
+.plan-history-filter{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);color:rgba(211,222,239,.78);border-radius:999px;padding:7px 11px;font-size:12px;cursor:pointer;}
+.plan-history-filter[aria-pressed="true"]{border-color:rgb(var(--vm-accent-rgb) / .35);background:rgb(var(--vm-accent-rgb) / .11);color:var(--vm-accent);}
+.plan-history-filter:focus-visible,.plan-history-action:focus-visible{outline:2px solid var(--vm-accent);outline-offset:2px;}
+.plan-history-list{display:grid;gap:9px;min-width:0;}
+.plan-history-entry{display:grid;gap:9px;min-width:0;border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.032);border-radius:14px;padding:13px 14px;overflow-wrap:anywhere;}
+.plan-history-entry-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;min-width:0;}
+.plan-history-time{font-size:12px;color:rgba(211,222,239,.62);font-variant-numeric:tabular-nums;}
+.plan-history-outcome{font-size:12px;font-weight:650;color:var(--vm-accent);text-align:right;}
+.plan-history-outcome[data-problem="true"]{color:#ffb4ab;}
+.plan-history-explanation{font-size:14px;line-height:1.45;color:rgba(239,244,255,.92);}
+.plan-history-plans{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;min-width:0;}
+.plan-history-plan{min-width:0;border-left:2px solid rgba(255,255,255,.1);padding-left:9px;}
+.plan-history-plan-label{display:block;font-size:11px;color:rgba(211,222,239,.56);margin-bottom:2px;}
+.plan-history-plan-value{display:block;font-size:12px;color:rgba(211,222,239,.84);overflow-wrap:anywhere;}
+.plan-history-note,.plan-history-state{font-size:12px;line-height:1.45;color:rgba(211,222,239,.62);}
+.plan-history-action{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);color:rgba(239,244,255,.86);border-radius:10px;padding:8px 11px;font-size:12px;cursor:pointer;}
+.plan-history-action:hover{border-color:rgb(var(--vm-accent-rgb) / .3);color:var(--vm-accent);}
 @media (max-width:960px){.heavy-app-grid,.keep-awake-grid,.heavy-rules-grid{grid-template-columns:1fr}.app-profile-row{grid-template-columns:1fr 1fr 38px 38px 38px}}
+@media (max-width:640px){.vm-acc-header{padding-left:16px;padding-right:16px}.vm-acc-item[data-open="true"] .vm-acc-body-inner{padding-left:16px;padding-right:16px}.plan-history-toolbar{align-items:stretch}.plan-history-filters{width:100%}.plan-history-entry-head{flex-direction:column;gap:4px}.plan-history-outcome{text-align:left}.plan-history-plans{grid-template-columns:1fr}}
         `.trim();
         document.head.appendChild(style);
     }
@@ -1893,6 +2001,322 @@
         }
     }
 
+    function historyLocale() {
+        return { it: 'it-IT', en: 'en-US', es: 'es-ES', zh: 'zh-CN' }[lang()] || 'en-US';
+    }
+
+    function historyFormat(template, values) {
+        return Object.entries(values || {}).reduce(
+            (result, [key, value]) => result.replaceAll('{' + key + '}', value == null || value === '' ? '—' : String(value)),
+            template);
+    }
+
+    function historyDate(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '—';
+        return new Intl.DateTimeFormat(historyLocale(), {
+            year: 'numeric', month: '2-digit', day: '2-digit',
+            hour: '2-digit', minute: '2-digit', second: '2-digit'
+        }).format(date);
+    }
+
+    function historyNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? new Intl.NumberFormat(historyLocale(), { maximumFractionDigits: 2 }).format(number) : '—';
+    }
+
+    function historyPlanName(plan) {
+        if (!plan) return ht('unavailable');
+        const key = {
+            powerSaver: 'dash_plan_saver',
+            balanced: 'dash_plan_balanced',
+            performance: 'dash_plan_performance'
+        }[plan.planId];
+        if (key) return I18n.t(key);
+        return String(plan.name || plan.guid || ht('customPlan'));
+    }
+
+    function historyExplanation(entry) {
+        const d = entry.details || {};
+        const app = String(d.appName || 'App');
+        switch (entry.reasonCode) {
+            case 'manual_selection': return ht('manualSelection');
+            case 'manual_override': return ht('manualOverride');
+            case 'gaming_manual': return ht('gamingManual');
+            case 'external_change_detected': return ht('externalChange');
+            case 'expected_plan_restored': return ht('guardRestore');
+            case 'profile_applied': return historyFormat(ht('appProfileApply'), { app });
+            case 'profile_session_ended': return historyFormat(ht('appProfileEnd'), { app });
+            case 'game_load_detected': return historyFormat(ht('gameLoad'), { app });
+            case 'heavy_app_load_detected': return historyFormat(ht('heavyLoad'), { app });
+            case 'heavy_app_session_ended': return historyFormat(ht('heavyEnd'), { app });
+            case 'cpu_rule_triggered':
+                return historyFormat(ht('cpuRule'), {
+                    comparison: d.comparison === 'lt' ? '<' : '>',
+                    threshold: historyNumber(d.thresholdPct),
+                    duration: historyNumber(d.durationMinutes),
+                    average: historyNumber(d.averageCpu)
+                });
+            case 'tripped': return entry.source === 'idle' ? ht('idleTrip') : ht('thermalTrip');
+            case 'active_switch': return entry.source === 'idle' ? ht('idleKeep') : ht('thermalKeep');
+            case 'cooled':
+            case 'disabled': return ht('thermalRestore');
+            case 'resumed':
+            case 'battery_skip': return ht('idleRestore');
+            case 'plugged_switch': return ht('plugged');
+            case 'unplugged_restore':
+            case 'disabled_restore': return ht('unplugged');
+            case 'low_battery_switch': return ht('lowBattery');
+            case 'low_battery_restore': return ht('lowBatteryRestore');
+            case 'parameters_reapply': return ht('parameters');
+            default: return ht('generic');
+        }
+    }
+
+    function historyFilteredEntries() {
+        const filter = planHistoryState.filter;
+        if (filter === 'all') return planHistoryState.entries;
+        if (filter === 'problems')
+            return planHistoryState.entries.filter(entry => entry.outcome === 'failed' || entry.outcome === 'unverifiable');
+        if (filter === 'automatic') return planHistoryState.entries.filter(entry => entry.category === 'automatic');
+        if (filter === 'manual') return planHistoryState.entries.filter(entry => entry.category === 'manual');
+        if (filter === 'external') return planHistoryState.entries.filter(entry => entry.category === 'external');
+        return planHistoryState.entries;
+    }
+
+    function historyElement(tag, className, textValue) {
+        const node = document.createElement(tag);
+        if (className) node.className = className;
+        if (textValue != null) node.textContent = String(textValue);
+        return node;
+    }
+
+    function historyPlanField(container, label, plan) {
+        const field = historyElement('div', 'plan-history-plan');
+        field.appendChild(historyElement('span', 'plan-history-plan-label', label));
+        field.appendChild(historyElement('span', 'plan-history-plan-value', historyPlanName(plan)));
+        container.appendChild(field);
+    }
+
+    function renderPlanHistory() {
+        const mount = document.getElementById('plan-history-mount');
+        const list = document.getElementById('plan-history-list');
+        const state = document.getElementById('plan-history-state');
+        const more = document.getElementById('plan-history-more');
+        const retry = document.getElementById('plan-history-retry');
+        const clear = document.getElementById('plan-history-clear');
+        if (!mount || !list || !state || !more || !retry || !clear) return;
+
+        document.querySelectorAll('#plan-history-mount .plan-history-filter').forEach(button => {
+            const active = button.dataset.filter === planHistoryState.filter;
+            button.setAttribute('aria-pressed', active ? 'true' : 'false');
+            button.textContent = ht(button.dataset.filter);
+        });
+        clear.textContent = ht('clear');
+        retry.textContent = ht('retry');
+        more.textContent = ht('showMore');
+        const note = document.getElementById('plan-history-note');
+        if (note) note.textContent = ht('note');
+
+        list.replaceChildren();
+        retry.hidden = true;
+        more.hidden = true;
+
+        if (planHistoryState.error) {
+            state.textContent = ht('loadError');
+            retry.hidden = false;
+            return;
+        }
+
+        const filtered = historyFilteredEntries();
+        if (!planHistoryState.entries.length) {
+            state.textContent = ht('empty');
+            return;
+        }
+        if (!filtered.length) {
+            state.textContent = ht('noResults');
+            return;
+        }
+
+        state.textContent = '';
+        filtered.slice(0, planHistoryState.visibleCount).forEach(entry => {
+            const card = historyElement('article', 'plan-history-entry');
+            const head = historyElement('div', 'plan-history-entry-head');
+            let timeText = historyDate(entry.lastTimestampUtc);
+            const attempts = Number(entry.attempts) || 1;
+            if (attempts > 1) {
+                timeText = historyDate(entry.firstTimestampUtc) + ' → ' + historyDate(entry.lastTimestampUtc) +
+                    ' · ' + new Intl.NumberFormat(historyLocale()).format(attempts) + ' ' + ht('attempts');
+            }
+            head.appendChild(historyElement('span', 'plan-history-time', timeText));
+            const outcome = historyElement('span', 'plan-history-outcome', ht(entry.outcome));
+            outcome.dataset.problem = entry.outcome === 'failed' || entry.outcome === 'unverifiable' ? 'true' : 'false';
+            head.appendChild(outcome);
+            card.appendChild(head);
+            card.appendChild(historyElement('p', 'plan-history-explanation', historyExplanation(entry)));
+
+            const plans = historyElement('div', 'plan-history-plans');
+            if (entry.outcome === 'applied') {
+                historyPlanField(plans, ht('previous'), entry.previousPlan);
+                historyPlanField(plans, ht('appliedPlan'), entry.observedPlan || entry.requestedPlan);
+            } else if (entry.outcome === 'externalDetected') {
+                historyPlanField(plans, ht('previous'), entry.previousPlan);
+                historyPlanField(plans, ht('observed'), entry.observedPlan);
+            } else {
+                historyPlanField(plans, ht('requested'), entry.requestedPlan);
+                historyPlanField(plans, ht('observed'), entry.observedPlan);
+            }
+            card.appendChild(plans);
+            list.appendChild(card);
+        });
+
+        more.hidden = filtered.length <= planHistoryState.visibleCount;
+    }
+
+    function mountPlanHistoryUi() {
+        const mount = document.getElementById('plan-history-mount');
+        if (!mount || mount.dataset.mounted === 'true') return;
+        mount.dataset.mounted = 'true';
+
+        const shell = historyElement('div', 'plan-history-shell');
+        const toolbar = historyElement('div', 'plan-history-toolbar');
+        const filters = historyElement('div', 'plan-history-filters');
+        filters.setAttribute('role', 'group');
+        ['all', 'automatic', 'manual', 'external', 'problems'].forEach(filter => {
+            const button = historyElement('button', 'plan-history-filter', ht(filter));
+            button.type = 'button';
+            button.dataset.filter = filter;
+            button.setAttribute('aria-pressed', filter === 'all' ? 'true' : 'false');
+            filters.appendChild(button);
+        });
+        toolbar.appendChild(filters);
+        const clear = historyElement('button', 'plan-history-action', ht('clear'));
+        clear.type = 'button';
+        clear.id = 'plan-history-clear';
+        toolbar.appendChild(clear);
+        shell.appendChild(toolbar);
+
+        const state = historyElement('p', 'plan-history-state');
+        state.id = 'plan-history-state';
+        state.setAttribute('aria-live', 'polite');
+        shell.appendChild(state);
+        const retry = historyElement('button', 'plan-history-action', ht('retry'));
+        retry.type = 'button';
+        retry.id = 'plan-history-retry';
+        retry.hidden = true;
+        shell.appendChild(retry);
+        const list = historyElement('div', 'plan-history-list');
+        list.id = 'plan-history-list';
+        shell.appendChild(list);
+        const more = historyElement('button', 'plan-history-action', ht('showMore'));
+        more.type = 'button';
+        more.id = 'plan-history-more';
+        more.hidden = true;
+        shell.appendChild(more);
+        const note = historyElement('p', 'plan-history-note', ht('note'));
+        note.id = 'plan-history-note';
+        shell.appendChild(note);
+        mount.appendChild(shell);
+    }
+
+    function planHistoryVisible() {
+        const panel = document.querySelector('#view-power .vm-acc-item[data-pm="history"]');
+        const view = document.getElementById('view-power');
+        const reorgPanel = document.querySelector('[data-vm-panel-group="power-plans"][data-vm-panel="history"]');
+        const reorgView = reorgPanel?.closest('.vm-reorg-view');
+        return !!((panel && view && panel.classList.contains('pm-active') && !view.classList.contains('hidden')) ||
+            (reorgPanel && reorgView && !reorgPanel.classList.contains('hidden') && !reorgView.classList.contains('hidden')));
+    }
+
+    async function loadPlanHistory() {
+        if (!Host.available || planHistoryState.loading) return;
+        mountPlanHistoryUi();
+        planHistoryState.loading = true;
+        try {
+            const snapshot = await Host.call('getPlanHistory');
+            const revision = Number(snapshot && snapshot.revision);
+            if (Number.isFinite(revision) && revision >= planHistoryState.revision) {
+                planHistoryState.revision = revision;
+                planHistoryState.entries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
+                planHistoryState.dirty = false;
+                planHistoryState.error = false;
+            }
+        } catch (err) {
+            planHistoryState.error = true;
+            console.error('getPlanHistory failed', err);
+        } finally {
+            planHistoryState.loading = false;
+            renderPlanHistory();
+        }
+    }
+
+    function wirePlanHistoryUi() {
+        if (planHistoryWired) return;
+        mountPlanHistoryUi();
+        const mount = document.getElementById('plan-history-mount');
+        if (!mount) return;
+
+        mount.addEventListener('click', async event => {
+            const filter = event.target.closest('.plan-history-filter');
+            if (filter) {
+                planHistoryState.filter = filter.dataset.filter || 'all';
+                planHistoryState.visibleCount = 50;
+                renderPlanHistory();
+                return;
+            }
+            if (event.target.closest('#plan-history-more')) {
+                planHistoryState.visibleCount += 50;
+                renderPlanHistory();
+                return;
+            }
+            if (event.target.closest('#plan-history-retry')) {
+                planHistoryState.error = false;
+                await loadPlanHistory();
+                return;
+            }
+            if (event.target.closest('#plan-history-clear')) {
+                try {
+                    const result = await Host.call('clearPlanHistory');
+                    const revision = Number(result && result.revision);
+                    if (!Number.isFinite(revision) || revision >= planHistoryState.revision) {
+                        if (Number.isFinite(revision)) planHistoryState.revision = revision;
+                        planHistoryState.entries = [];
+                        planHistoryState.dirty = false;
+                        planHistoryState.error = false;
+                        planHistoryState.visibleCount = 50;
+                        renderPlanHistory();
+                    }
+                } catch (err) {
+                    planHistoryState.error = true;
+                    renderPlanHistory();
+                }
+            }
+        });
+
+        planHistoryUnsubscribe = Host.on('planHistoryChanged', data => {
+            const revision = Number(data && data.revision);
+            if (Number.isFinite(revision) && revision <= planHistoryState.revision) return;
+            planHistoryState.dirty = true;
+            if (planHistoryVisible()) loadPlanHistory();
+        });
+
+        const refreshIfVisible = () => {
+            if (planHistoryVisible()) loadPlanHistory();
+        };
+        document.addEventListener('viewchange', refreshIfVisible);
+        document.addEventListener('voltuiviewchanged', refreshIfVisible);
+        document.addEventListener('voltuisubviewchanged', refreshIfVisible);
+        window.addEventListener('unload', () => {
+            if (planHistoryUnsubscribe) planHistoryUnsubscribe();
+            planHistoryUnsubscribe = null;
+            document.removeEventListener('viewchange', refreshIfVisible);
+            document.removeEventListener('voltuiviewchanged', refreshIfVisible);
+            document.removeEventListener('voltuisubviewchanged', refreshIfVisible);
+        }, { once: true });
+        planHistoryWired = true;
+        renderPlanHistory();
+    }
+
     Host.call('getSettings').then(res => {
         settings = res.settings;
         if (window.I18n && I18n.initFromSettings) I18n.initFromSettings(res);
@@ -1921,10 +2345,14 @@
         document.dispatchEvent(new CustomEvent('settingsloaded'));
     }).catch(err => console.error('getSettings failed', err));
 
-    document.addEventListener('langchanged', refreshPowerLabels);
+    document.addEventListener('langchanged', () => {
+        refreshPowerLabels();
+        renderPlanHistory();
+    });
 
     // Accordion: collapse/expand the power feature groups.
     ensurePowerStyles();
+    wirePlanHistoryUi();
     document.addEventListener('click', (e) => {
         const header = e.target.closest('#view-power .vm-acc-header');
         if (!header) return;
@@ -1949,6 +2377,10 @@
                     mountHeavyAppUi();
                     wireHeavyAppUi();
                     if (settings) syncHeavyAppUi();
+                    break;
+                case 'history':
+                    wirePlanHistoryUi();
+                    loadPlanHistory();
                     break;
                 // keep-awake (awake) moved to the dedicated energy tab; mount
                 // happens via loadIntoUi() at settings boot, no segment here.

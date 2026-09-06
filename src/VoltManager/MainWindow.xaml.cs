@@ -439,7 +439,11 @@ public partial class MainWindow : Window
 
         try
         {
-            bool applied = await Task.Run(() => _app.SetManualOverride(PlanId.Performance, null));
+            bool applied = await Task.Run(() => _app.SetManualOverride(
+                PlanId.Performance,
+                null,
+                "gamingManual",
+                "gaming_manual"));
             if (applied)
             {
                 PushGamingModeState();

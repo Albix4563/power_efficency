@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -56,10 +57,14 @@ public partial class App : Application
     private MainWindow? _mainWindow;
     private bool _heavyAppPlanSessionActive;
     private PlanId? _planBeforeHeavyAppSession;
+    private string _heavyAppHistoryName = "";
+    private string _heavyAppHistoryKind = "";
+    private string _heavyAppHistoryReason = "";
     private DateTime _heavyAppLastActiveUtc;
     private bool _heavyAppLastActiveWasGame;
     private bool _appProfilePlanSessionActive;
     private PlanId? _planBeforeAppProfileSession;
+    private string _appProfileHistoryName = "";
     private DateTime _appProfileLastActiveUtc;
     private bool _appProfileKeepAwakeRequested;
     private readonly PowerPlanGuardService _planGuard = new();
@@ -487,7 +492,19 @@ public partial class App : Application
             if (!handledByHigherPriority)
             {
                 var target = Automation.Evaluate(avg, now, ActivePlan?.PlanId, Settings.Current);
-                if (target != null && Power.SetActivePlan(target.Value))
+                var rule = string.IsNullOrWhiteSpace(Automation.CandidateRuleId)
+                    ? null
+                    : Settings.Current.Rules.FirstOrDefault(r => r.Id == Automation.CandidateRuleId);
+                var context = HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "cpuAutomation",
+                    "cpu_rule_triggered",
+                    ("ruleId", rule?.Id),
+                    ("comparison", rule?.Comparison),
+                    ("thresholdPct", Invariant(rule?.ThresholdPct)),
+                    ("durationMinutes", Invariant(rule?.DurationMinutes)),
+                    ("averageCpu", Invariant(avg)));
+                if (target != null && Power.SetActivePlan(target.Value, context))
                 {
                     _fallbackPlanReason = new ActivePlanReasonState
                     {
@@ -571,9 +588,11 @@ public partial class App : Application
         if (canAutoSwitch && state.Active && state.TargetPlan != null)
         {
             _appProfileLastActiveUtc = now;
+            var profileName = state.ActiveProfiles.FirstOrDefault()?.Name ?? "";
             if (!_appProfilePlanSessionActive)
             {
                 _planBeforeAppProfileSession = ActivePlan?.PlanId;
+                _appProfileHistoryName = profileName;
                 _appProfilePlanSessionActive = true;
                 Automation.Reset();
             }
@@ -583,7 +602,11 @@ public partial class App : Application
             if (ActivePlan?.PlanId == target)
                 return true;
 
-            if (Power.SetActivePlan(target))
+            if (Power.SetActivePlan(target, HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "appProfile",
+                    "profile_applied",
+                    ("appName", profileName))))
             {
                 var current = Power.GetActivePlan();
                 ActivePlan = current;
@@ -599,11 +622,19 @@ public partial class App : Application
 
             _appProfilePlanSessionActive = false;
             var previous = _planBeforeAppProfileSession;
+            var profileName = _appProfileHistoryName;
             _planBeforeAppProfileSession = null;
+            _appProfileHistoryName = "";
             _planGuard.ClearExpected("appProfile");
             Automation.Reset();
 
-            if (!userOverrideActive && previous != null && ActivePlan?.PlanId != previous && Power.SetActivePlan(previous.Value))
+            if (!userOverrideActive && previous != null && ActivePlan?.PlanId != previous && Power.SetActivePlan(
+                    previous.Value,
+                    HistoryContext(
+                        PlanHistoryCategory.Automatic,
+                        "appProfile",
+                        "profile_session_ended",
+                        ("appName", profileName))))
             {
                 var current = Power.GetActivePlan();
                 ActivePlan = current;
@@ -644,9 +675,13 @@ public partial class App : Application
         {
             _heavyAppLastActiveUtc = now;
             _heavyAppLastActiveWasGame = state.GameActive;
+            var activeProcess = state.ActiveProcesses.FirstOrDefault();
             if (!_heavyAppPlanSessionActive)
             {
                 _planBeforeHeavyAppSession = ActivePlan?.PlanId;
+                _heavyAppHistoryName = activeProcess?.Name ?? "";
+                _heavyAppHistoryKind = activeProcess?.Kind ?? "";
+                _heavyAppHistoryReason = activeProcess?.Reason ?? "";
                 _heavyAppPlanSessionActive = true;
                 Automation.Reset();
             }
@@ -656,7 +691,13 @@ public partial class App : Application
             if (ActivePlan?.PlanId == target)
                 return true;
 
-            if (Power.SetActivePlan(target))
+            if (Power.SetActivePlan(target, HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "heavyApp",
+                    state.GameActive ? "game_load_detected" : "heavy_app_load_detected",
+                    ("appName", activeProcess?.Name),
+                    ("kind", activeProcess?.Kind),
+                    ("detectionReason", activeProcess?.Reason))))
             {
                 var current = Power.GetActivePlan();
                 ActivePlan = current;
@@ -675,11 +716,25 @@ public partial class App : Application
             _heavyAppPlanSessionActive = false;
             _heavyAppLastActiveWasGame = false;
             var previous = _planBeforeHeavyAppSession;
+            var appName = _heavyAppHistoryName;
+            var kind = _heavyAppHistoryKind;
+            var detectionReason = _heavyAppHistoryReason;
             _planBeforeHeavyAppSession = null;
+            _heavyAppHistoryName = "";
+            _heavyAppHistoryKind = "";
+            _heavyAppHistoryReason = "";
             _planGuard.ClearExpected("heavyApp");
             Automation.Reset();
 
-            if (!userOverrideActive && previous != null && ActivePlan?.PlanId != previous && Power.SetActivePlan(previous.Value))
+            if (!userOverrideActive && previous != null && ActivePlan?.PlanId != previous && Power.SetActivePlan(
+                    previous.Value,
+                    HistoryContext(
+                        PlanHistoryCategory.Automatic,
+                        "heavyApp",
+                        "heavy_app_session_ended",
+                        ("appName", appName),
+                        ("kind", kind),
+                        ("detectionReason", detectionReason))))
             {
                 var current = Power.GetActivePlan();
                 ActivePlan = current;
@@ -707,7 +762,16 @@ public partial class App : Application
         else
             _planGuard.ClearExpected("thermal");
 
-        if (decision.TargetPlan != null && Power.SetActivePlan(decision.TargetPlan.Value))
+        if (decision.TargetPlan != null && Power.SetActivePlan(
+                decision.TargetPlan.Value,
+                HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "thermal",
+                    decision.State.Message,
+                    ("peakTemp", Invariant(decision.State.PeakTemp)),
+                    ("thresholdCelsius", Invariant(decision.State.ThresholdCelsius)),
+                    ("coolThresholdCelsius", Invariant(decision.State.CoolThresholdCelsius)),
+                    ("holdSeconds", decision.State.HoldSeconds.ToString(CultureInfo.InvariantCulture)))))
         {
             var current = Power.GetActivePlan();
             ActivePlan = current;
@@ -734,7 +798,15 @@ public partial class App : Application
         else
             _planGuard.ClearExpected("idle");
 
-        if (decision.TargetPlan != null && Power.SetActivePlan(decision.TargetPlan.Value))
+        if (decision.TargetPlan != null && Power.SetActivePlan(
+                decision.TargetPlan.Value,
+                HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "idle",
+                    decision.State.Message,
+                    ("idleSeconds", Invariant(decision.State.IdleSeconds)),
+                    ("idleMinutes", decision.State.IdleMinutes.ToString(CultureInfo.InvariantCulture)),
+                    ("onlyOnBattery", decision.State.OnlyOnBattery.ToString()))))
         {
             var current = Power.GetActivePlan();
             ActivePlan = current;
@@ -757,7 +829,15 @@ public partial class App : Application
         else
             _planGuard.ClearExpected("powerSource");
 
-        if (decision.TargetPlan != null && Power.SetActivePlan(decision.TargetPlan.Value))
+        if (decision.TargetPlan != null && Power.SetActivePlan(
+                decision.TargetPlan.Value,
+                HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "powerSource",
+                    decision.State.Message,
+                    ("pluggedIn", decision.State.PluggedIn.ToString()),
+                    ("batteryPercent", decision.State.BatteryPercent?.ToString(CultureInfo.InvariantCulture)),
+                    ("lowBatteryThresholdPercent", decision.State.LowBatteryThresholdPercent.ToString(CultureInfo.InvariantCulture)))))
         {
             var current = Power.GetActivePlan();
             ActivePlan = current;
@@ -796,7 +876,14 @@ public partial class App : Application
         var enriched = PowerPlanGuardService.WithSuspectsAndMessage(conflict, suspects);
         Logger.Warn(enriched.Message);
 
-        if (!Power.SetActivePlan(conflict.ExpectedPlan))
+        if (!Power.SetActivePlan(
+                conflict.ExpectedPlan,
+                HistoryContext(
+                    PlanHistoryCategory.Automatic,
+                    "planGuard",
+                    "expected_plan_restored",
+                    ("expectedSource", conflict.Source),
+                    ("expectedDetail", conflict.Detail))))
             return current;
 
         var restored = Power.GetActivePlan();
@@ -828,15 +915,30 @@ public partial class App : Application
 
     public KeepAwakeState SetKeepAwake(bool enabled) => Awake.SetEnabled(enabled);
 
-    public bool SetManualOverride(PlanId plan, TimeSpan? duration)
+    public bool SetManualOverride(
+        PlanId plan,
+        TimeSpan? duration,
+        string source = "manual",
+        string reasonCode = "manual_override")
     {
         _appProfilePlanSessionActive = false;
         _planBeforeAppProfileSession = null;
+        _appProfileHistoryName = "";
         SetAppProfileKeepAwakeRequest(false);
         _heavyAppPlanSessionActive = false;
         _planBeforeHeavyAppSession = null;
+        _heavyAppHistoryName = "";
+        _heavyAppHistoryKind = "";
+        _heavyAppHistoryReason = "";
 
-        if (!Power.SetActivePlan(plan)) return false;
+        if (!Power.SetActivePlan(
+                plan,
+                HistoryContext(
+                    PlanHistoryCategory.Manual,
+                    source,
+                    reasonCode,
+                    ("durationMinutes", duration?.TotalMinutes.ToString(CultureInfo.InvariantCulture)))))
+            return false;
 
         Settings.Current.Override = new ManualOverride
         {
@@ -970,6 +1072,22 @@ public partial class App : Application
         ManualOverrideChanged?.Invoke(null);
         PublishCpuAutomationState(now);
     }
+
+    private static PlanChangeContext HistoryContext(
+        PlanHistoryCategory category,
+        string source,
+        string reasonCode,
+        params (string Key, string? Value)[] details)
+        => new(
+            category,
+            source,
+            reasonCode,
+            details
+                .Where(item => item.Value != null)
+                .ToDictionary(item => item.Key, item => item.Value!, StringComparer.Ordinal));
+
+    private static string Invariant(double value) => value.ToString("0.###", CultureInfo.InvariantCulture);
+    private static string? Invariant(double? value) => value?.ToString("0.###", CultureInfo.InvariantCulture);
 
     private static string ToPlanKey(PlanId plan) => plan switch
     {

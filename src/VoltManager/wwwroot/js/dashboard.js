@@ -718,6 +718,7 @@
     const lowBatteryThresholdInput = document.getElementById('low-battery-threshold-input');
     const activePlanReasonText = document.getElementById('active-plan-reason-text');
     const activePlanReasonIcon = document.getElementById('active-plan-reason-icon');
+    const openPlanHistoryButton = document.getElementById('open-plan-history');
     const gamingModeHome = document.getElementById('pref-gaming-mode-home');
     const gamingModeHomeToggle = document.getElementById('toggle-gaming-mode-home');
     const overrideOverlay = document.getElementById('manual-override-overlay');
@@ -781,6 +782,16 @@
         if ((source === 'appProfile' || source === 'heavyApp') && detail) text += ' · ' + detail;
         activePlanReasonText.textContent = text;
     }
+
+    openPlanHistoryButton?.addEventListener('click', () => {
+        if (window.VoltUiReorg?.activateView && window.VoltUiReorg?.activateSubview) {
+            VoltUiReorg.activateView('power-plans', true);
+            VoltUiReorg.activateSubview('power-plans', 'history');
+            return;
+        }
+        document.querySelector('#nav-list a[data-view="power"]')?.click();
+        setTimeout(() => document.querySelector('#view-power .pm-seg[data-pm="history"]')?.click(), 0);
+    });
 
     function formatRemaining(expiresAtUtc) {
         const expires = new Date(expiresAtUtc);

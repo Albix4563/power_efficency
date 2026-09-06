@@ -147,6 +147,7 @@
             subnav('power-plans', [
                 { id: 'active', icon: 'bolt', label: 'tab_active_plan' },
                 { id: 'source', icon: 'power', label: 'tab_power_source' },
+                { id: 'history', icon: 'history', label: 'tab_plan_history' },
                 { id: 'advanced', icon: 'tune', label: 'tab_advanced' }
             ]) + `<div class="vm-subview-stack">
                 ${panel('power-plans', 'active', `<section class="glass-panel rounded-xl p-lg vm-section-card">
@@ -158,6 +159,9 @@
                     <div id="vm-power-source" class="vm-stack"></div><div class="vm-divider"></div>
                     <h3 class="vm-section-title"><span class="material-symbols-outlined">bedtime_off</span><span data-vm-i18n="keep_awake_primary"></span></h3>
                     <div id="vm-keep-awake"></div>
+                </section>`, false)}
+                ${panel('power-plans', 'history', `<section class="glass-panel rounded-xl p-lg vm-section-card">
+                    <div id="vm-power-history"></div>
                 </section>`, false)}
                 ${panel('power-plans', 'advanced', `<section class="glass-panel rounded-xl p-lg vm-section-card">
                     <div class="vm-advanced-warning"><span class="material-symbols-outlined">info</span><span data-vm-i18n="advanced_hint"></span></div>

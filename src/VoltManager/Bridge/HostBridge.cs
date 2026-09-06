@@ -89,6 +89,7 @@ public class HostBridge : IDisposable
         _app.AppProfiles.ActivityChanged += OnAppProfilesChanged;
         _app.ActivePlanReasonChanged += OnPlanReasonChanged;
         _app.PowerPlanConflictDetected += OnPlanConflict;
+        _power.History.Changed += OnPlanHistoryChanged;
         _app.StandbyAutoCleaner.AutoCleaned += OnStandbyCleaned;
     }
 
@@ -110,6 +111,7 @@ public class HostBridge : IDisposable
     private void OnAppProfilesChanged(AppPowerProfileState state) => PushEvent("appPowerProfileActivityChanged", state);
     private void OnPlanReasonChanged(ActivePlanReasonState state) => PushEvent("activePlanReasonChanged", state);
     private void OnPlanConflict(PowerPlanConflictNotification notice) => PushEvent("powerPlanConflictDetected", notice);
+    private void OnPlanHistoryChanged(long revision) => PushEvent("planHistoryChanged", new { revision });
     private void OnStandbyCleaned(MemoryStatus memory) => PushEvent("standbyAutoCleaned", memory);
 
     public void Dispose()
@@ -125,6 +127,7 @@ public class HostBridge : IDisposable
         _app.AppProfiles.ActivityChanged -= OnAppProfilesChanged;
         _app.ActivePlanReasonChanged -= OnPlanReasonChanged;
         _app.PowerPlanConflictDetected -= OnPlanConflict;
+        _power.History.Changed -= OnPlanHistoryChanged;
         _app.StandbyAutoCleaner.AutoCleaned -= OnStandbyCleaned;
     }
 
@@ -312,6 +315,12 @@ public class HostBridge : IDisposable
             case "getActivePlanReason":
                 return _app.GetActivePlanReason();
 
+            case "getPlanHistory":
+                return _power.History.GetSnapshot();
+
+            case "clearPlanHistory":
+                return new { revision = _power.History.Clear() };
+
             case "listPowerPlans":
                 return await Task.Run(() => _planParams.ListPlans());
 
@@ -345,7 +354,13 @@ public class HostBridge : IDisposable
                 var planStr = payload.GetProperty("plan").GetString() ?? "";
                 if (!Enum.TryParse<PlanId>(planStr, true, out var plan))
                     throw new ArgumentException(_loc.T("Error_UnknownPlan", planStr));
-                bool okSet = await Task.Run(() => _power.SetActivePlan(plan));
+                bool okSet = await Task.Run(() => _power.SetActivePlan(
+                    plan,
+                    new PlanChangeContext(
+                        PlanHistoryCategory.Manual,
+                        "manual",
+                        "manual_selection",
+                        new Dictionary<string, string>())));
                 return new { success = okSet };
             }
 
