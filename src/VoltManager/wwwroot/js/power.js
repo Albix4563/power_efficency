@@ -23,6 +23,7 @@
     const planHistoryState = {
         entries: [],
         revision: -1,
+        notifiedRevision: -1,
         filter: 'all',
         visibleCount: 50,
         dirty: true,
@@ -492,71 +493,79 @@
     const historyText = {
         it: {
             note: 'Ultimi 500 eventi della sessione. La cronologia si azzera alla chiusura di VoltManager.',
+            idleDisabled: 'Protezione inattività disattivata: richiesta di ripristino del piano precedente', thermalDisabled: 'Protezione termica disattivata: richiesta di ripristino del piano precedente',
+            idleBatterySkip: 'Protezione inattività solo a batteria: alimentazione a batteria assente o non rilevabile', powerSourceDisabled: 'Automazione alimentazione disattivata: richiesta di ripristino del piano precedente',
             clear: 'Svuota cronologia', all: 'Tutti', automatic: 'Automatici', manual: 'Manuali', external: 'Esterni', problems: 'Problemi',
             empty: 'Nessun cambio di piano registrato in questa sessione.', noResults: 'Nessun evento corrisponde al filtro selezionato.',
             loadError: 'Impossibile caricare la cronologia.', retry: 'Riprova', showMore: 'Mostra altre', attempts: 'tentativi',
             applied: 'Applicato', externalDetected: 'Cambio esterno rilevato', failed: 'Fallito', unverifiable: 'Esito non verificabile',
             previous: 'Precedente', appliedPlan: 'Applicato', requested: 'Richiesto', observed: 'Rilevato', unavailable: 'Non disponibile', customPlan: 'Piano personalizzato',
             manualSelection: 'Selezione manuale del piano', manualOverride: 'Override manuale', gamingManual: 'Modalità gaming manuale',
-            externalChange: 'Cambio del piano rilevato da VoltManager', guardRestore: 'Protezione del piano: ripristinato il piano atteso',
-            appProfileApply: 'Profilo app: {app}', appProfileEnd: 'Fine profilo app: ripristinato il piano precedente ({app})',
-            gameLoad: 'Gioco rilevato: {app}', heavyLoad: 'Carico pesante rilevato: {app}', heavyEnd: 'Fine sessione app/gioco: ripristinato il piano precedente ({app})',
+            externalChange: 'Cambio del piano rilevato da VoltManager', guardRestore: 'Protezione del piano: richiesta di ripristino del piano atteso',
+            appProfileApply: 'Profilo app: {app}', appProfileEnd: 'Fine profilo app: richiesta di ripristino del piano precedente ({app})',
+            gameLoad: 'Gioco rilevato: {app}', heavyLoad: 'Carico pesante rilevato: {app}', heavyEnd: 'Fine sessione app/gioco: richiesta di ripristino del piano precedente ({app})',
             cpuRule: 'Regola CPU {comparison} {threshold}% per {duration} min (media {average}%)',
-            thermalTrip: 'Protezione termica intervenuta', thermalKeep: 'Protezione termica: mantenuto il piano di sicurezza', thermalRestore: 'Protezione termica terminata: ripristinato il piano precedente',
-            idleTrip: 'Inattività rilevata', idleKeep: 'Inattività persistente: ripristinato il piano previsto', idleRestore: 'Attività ripresa: ripristinato il piano precedente',
-            plugged: 'Alimentatore collegato', unplugged: 'Alimentatore scollegato: ripristinato il piano precedente', lowBattery: 'Batteria scarica: applicato il piano di risparmio', lowBatteryRestore: 'Batteria ripristinata: ripristinato il piano precedente',
-            parameters: 'Parametri avanzati modificati: riapplicato il piano attivo', generic: 'Cambio piano richiesto da VoltManager'
+            thermalTrip: 'Protezione termica intervenuta', thermalKeep: 'Protezione termica: richiesta di mantenimento del piano di sicurezza', thermalRestore: 'Protezione termica terminata: richiesta di ripristino del piano precedente',
+            idleTrip: 'Inattività rilevata', idleKeep: 'Inattività persistente: richiesta di ripristino del piano previsto', idleRestore: 'Attività ripresa: richiesta di ripristino del piano precedente',
+            plugged: 'Alimentatore collegato', unplugged: 'Alimentatore scollegato: richiesta di ripristino del piano precedente', lowBattery: 'Batteria scarica: richiesto il piano di risparmio', lowBatteryRestore: 'Batteria ripristinata: richiesta di ripristino del piano precedente',
+            parameters: 'Parametri avanzati modificati: richiesta di riapplicazione del piano attivo', generic: 'Cambio piano richiesto da VoltManager'
         },
         en: {
             note: 'Last 500 events from this session. History is cleared when VoltManager closes.',
+            idleDisabled: 'Idle protection disabled: previous plan requested', thermalDisabled: 'Thermal protection disabled: previous plan requested',
+            idleBatterySkip: 'Battery-only idle protection: battery power absent or unavailable', powerSourceDisabled: 'Power-source automation disabled: previous plan requested',
             clear: 'Clear history', all: 'All', automatic: 'Automatic', manual: 'Manual', external: 'External', problems: 'Problems',
             empty: 'No power-plan changes have been recorded in this session.', noResults: 'No events match the selected filter.',
             loadError: 'Could not load history.', retry: 'Retry', showMore: 'Show more', attempts: 'attempts',
             applied: 'Applied', externalDetected: 'External change detected', failed: 'Failed', unverifiable: 'Outcome could not be verified',
             previous: 'Previous', appliedPlan: 'Applied', requested: 'Requested', observed: 'Observed', unavailable: 'Unavailable', customPlan: 'Custom plan',
             manualSelection: 'Manual power-plan selection', manualOverride: 'Manual override', gamingManual: 'Manual gaming mode',
-            externalChange: 'Power-plan change detected by VoltManager', guardRestore: 'Plan protection: restored the expected plan',
-            appProfileApply: 'App profile: {app}', appProfileEnd: 'App profile ended: restored the previous plan ({app})',
-            gameLoad: 'Game detected: {app}', heavyLoad: 'Heavy load detected: {app}', heavyEnd: 'App/game session ended: restored the previous plan ({app})',
+            externalChange: 'Power-plan change detected by VoltManager', guardRestore: 'Plan protection: requested restoration of the expected plan',
+            appProfileApply: 'App profile: {app}', appProfileEnd: 'App profile ended: requested restoration of the previous plan ({app})',
+            gameLoad: 'Game detected: {app}', heavyLoad: 'Heavy load detected: {app}', heavyEnd: 'App/game session ended: requested restoration of the previous plan ({app})',
             cpuRule: 'CPU rule {comparison} {threshold}% for {duration} min (average {average}%)',
-            thermalTrip: 'Thermal protection activated', thermalKeep: 'Thermal protection: restored the safety plan', thermalRestore: 'Thermal protection ended: restored the previous plan',
-            idleTrip: 'User inactivity detected', idleKeep: 'Inactivity persisted: restored the expected plan', idleRestore: 'Activity resumed: restored the previous plan',
-            plugged: 'AC power connected', unplugged: 'AC power disconnected: restored the previous plan', lowBattery: 'Low battery: applied the power-saving plan', lowBatteryRestore: 'Battery recovered: restored the previous plan',
-            parameters: 'Advanced parameters changed: reapplied the active plan', generic: 'Power-plan change requested by VoltManager'
+            thermalTrip: 'Thermal protection activated', thermalKeep: 'Thermal protection: requested restoration of the safety plan', thermalRestore: 'Thermal protection ended: requested restoration of the previous plan',
+            idleTrip: 'User inactivity detected', idleKeep: 'Inactivity persisted: requested restoration of the expected plan', idleRestore: 'Activity resumed: requested restoration of the previous plan',
+            plugged: 'AC power connected', unplugged: 'AC power disconnected: requested restoration of the previous plan', lowBattery: 'Low battery: requested the power-saving plan', lowBatteryRestore: 'Battery recovered: requested restoration of the previous plan',
+            parameters: 'Advanced parameters changed: requested reapplication of the active plan', generic: 'Power-plan change requested by VoltManager'
         },
         es: {
             note: 'Últimos 500 eventos de la sesión. El historial se borra al cerrar VoltManager.',
+            idleDisabled: 'Protección por inactividad desactivada: restauración del plan anterior solicitada', thermalDisabled: 'Protección térmica desactivada: restauración del plan anterior solicitada',
+            idleBatterySkip: 'Protección por inactividad solo con batería: alimentación por batería ausente o desconocida', powerSourceDisabled: 'Automatización de alimentación desactivada: restauración del plan anterior solicitada',
             clear: 'Vaciar historial', all: 'Todos', automatic: 'Automáticos', manual: 'Manuales', external: 'Externos', problems: 'Problemas',
             empty: 'No se han registrado cambios de plan en esta sesión.', noResults: 'Ningún evento coincide con el filtro seleccionado.',
             loadError: 'No se pudo cargar el historial.', retry: 'Reintentar', showMore: 'Mostrar más', attempts: 'intentos',
             applied: 'Aplicado', externalDetected: 'Cambio externo detectado', failed: 'Fallido', unverifiable: 'Resultado no verificable',
             previous: 'Anterior', appliedPlan: 'Aplicado', requested: 'Solicitado', observed: 'Detectado', unavailable: 'No disponible', customPlan: 'Plan personalizado',
             manualSelection: 'Selección manual del plan', manualOverride: 'Override manual', gamingManual: 'Modo gaming manual',
-            externalChange: 'Cambio de plan detectado por VoltManager', guardRestore: 'Protección del plan: restaurado el plan esperado',
-            appProfileApply: 'Perfil de app: {app}', appProfileEnd: 'Fin del perfil de app: restaurado el plan anterior ({app})',
-            gameLoad: 'Juego detectado: {app}', heavyLoad: 'Carga pesada detectada: {app}', heavyEnd: 'Fin de sesión de app/juego: restaurado el plan anterior ({app})',
+            externalChange: 'Cambio de plan detectado por VoltManager', guardRestore: 'Protección del plan: restauración solicitada del plan esperado',
+            appProfileApply: 'Perfil de app: {app}', appProfileEnd: 'Fin del perfil de app: restauración solicitada del plan anterior ({app})',
+            gameLoad: 'Juego detectado: {app}', heavyLoad: 'Carga pesada detectada: {app}', heavyEnd: 'Fin de sesión de app/juego: restauración solicitada del plan anterior ({app})',
             cpuRule: 'Regla CPU {comparison} {threshold}% durante {duration} min (media {average}%)',
-            thermalTrip: 'Protección térmica activada', thermalKeep: 'Protección térmica: restaurado el plan de seguridad', thermalRestore: 'Protección térmica finalizada: restaurado el plan anterior',
-            idleTrip: 'Inactividad detectada', idleKeep: 'Inactividad persistente: restaurado el plan previsto', idleRestore: 'Actividad reanudada: restaurado el plan anterior',
-            plugged: 'Alimentador conectado', unplugged: 'Alimentador desconectado: restaurado el plan anterior', lowBattery: 'Batería baja: aplicado el plan de ahorro', lowBatteryRestore: 'Batería recuperada: restaurado el plan anterior',
-            parameters: 'Parámetros avanzados modificados: reaplicado el plan activo', generic: 'Cambio de plan solicitado por VoltManager'
+            thermalTrip: 'Protección térmica activada', thermalKeep: 'Protección térmica: restauración solicitada del plan de seguridad', thermalRestore: 'Protección térmica finalizada: restauración solicitada del plan anterior',
+            idleTrip: 'Inactividad detectada', idleKeep: 'Inactividad persistente: restauración solicitada del plan previsto', idleRestore: 'Actividad reanudada: restauración solicitada del plan anterior',
+            plugged: 'Alimentador conectado', unplugged: 'Alimentador desconectado: restauración solicitada del plan anterior', lowBattery: 'Batería baja: plan de ahorro solicitado', lowBatteryRestore: 'Batería recuperada: restauración solicitada del plan anterior',
+            parameters: 'Parámetros avanzados modificados: reaplicación solicitada del plan activo', generic: 'Cambio de plan solicitado por VoltManager'
         },
         zh: {
             note: '本次会话最近 500 个事件。关闭 VoltManager 后历史记录会清空。',
+            idleDisabled: '空闲保护已禁用：请求恢复之前的计划', thermalDisabled: '温度保护已禁用：请求恢复之前的计划',
+            idleBatterySkip: '仅电池供电时启用空闲保护：未使用电池或无法确定供电状态', powerSourceDisabled: '供电自动切换已禁用：请求恢复之前的计划',
             clear: '清空历史记录', all: '全部', automatic: '自动', manual: '手动', external: '外部', problems: '问题',
             empty: '本次会话尚未记录电源计划更改。', noResults: '没有符合所选筛选条件的事件。',
             loadError: '无法加载历史记录。', retry: '重试', showMore: '显示更多', attempts: '次尝试',
             applied: '已应用', externalDetected: '检测到外部更改', failed: '失败', unverifiable: '结果无法验证',
             previous: '之前', appliedPlan: '已应用', requested: '请求', observed: '检测到', unavailable: '不可用', customPlan: '自定义计划',
             manualSelection: '手动选择电源计划', manualOverride: '手动覆盖', gamingManual: '手动游戏模式',
-            externalChange: 'VoltManager 检测到电源计划更改', guardRestore: '计划保护：已恢复预期计划',
-            appProfileApply: '应用配置：{app}', appProfileEnd: '应用配置结束：已恢复之前的计划（{app}）',
-            gameLoad: '检测到游戏：{app}', heavyLoad: '检测到高负载：{app}', heavyEnd: '应用/游戏会话结束：已恢复之前的计划（{app}）',
+            externalChange: 'VoltManager 检测到电源计划更改', guardRestore: '计划保护：请求恢复预期计划',
+            appProfileApply: '应用配置：{app}', appProfileEnd: '应用配置结束：请求恢复之前的计划（{app}）',
+            gameLoad: '检测到游戏：{app}', heavyLoad: '检测到高负载：{app}', heavyEnd: '应用/游戏会话结束：请求恢复之前的计划（{app}）',
             cpuRule: 'CPU 规则 {comparison} {threshold}%，持续 {duration} 分钟（平均 {average}%）',
-            thermalTrip: '温度保护已触发', thermalKeep: '温度保护：已恢复安全计划', thermalRestore: '温度保护结束：已恢复之前的计划',
-            idleTrip: '检测到用户空闲', idleKeep: '持续空闲：已恢复预期计划', idleRestore: '用户恢复活动：已恢复之前的计划',
-            plugged: '已连接电源', unplugged: '已断开电源：已恢复之前的计划', lowBattery: '电量不足：已应用节能计划', lowBatteryRestore: '电量恢复：已恢复之前的计划',
-            parameters: '高级参数已修改：重新应用当前计划', generic: 'VoltManager 请求更改电源计划'
+            thermalTrip: '温度保护已触发', thermalKeep: '温度保护：请求恢复安全计划', thermalRestore: '温度保护结束：请求恢复之前的计划',
+            idleTrip: '检测到用户空闲', idleKeep: '持续空闲：请求恢复预期计划', idleRestore: '用户恢复活动：请求恢复之前的计划',
+            plugged: '已连接电源', unplugged: '已断开电源：请求恢复之前的计划', lowBattery: '电量不足：请求应用节能计划', lowBatteryRestore: '电量恢复：请求恢复之前的计划',
+            parameters: '高级参数已修改：请求重新应用当前计划', generic: 'VoltManager 请求更改电源计划'
         }
     };
 
@@ -2007,7 +2016,7 @@
 
     function historyFormat(template, values) {
         return Object.entries(values || {}).reduce(
-            (result, [key, value]) => result.replaceAll('{' + key + '}', value == null || value === '' ? '—' : String(value)),
+            (result, [key, value]) => result.replaceAll('{' + key + '}', () => value == null || value === '' ? '—' : String(value)),
             template);
     }
 
@@ -2021,6 +2030,7 @@
     }
 
     function historyNumber(value) {
+        if (value == null || value === '') return '—';
         const number = Number(value);
         return Number.isFinite(number) ? new Intl.NumberFormat(historyLocale(), { maximumFractionDigits: 2 }).format(number) : '—';
     }
@@ -2058,14 +2068,16 @@
                     average: historyNumber(d.averageCpu)
                 });
             case 'tripped': return entry.source === 'idle' ? ht('idleTrip') : ht('thermalTrip');
+            case 'active_no_input': return ht('idleKeep');
+            case 'active_no_sensors': return ht('thermalKeep');
             case 'active_switch': return entry.source === 'idle' ? ht('idleKeep') : ht('thermalKeep');
-            case 'cooled':
-            case 'disabled': return ht('thermalRestore');
-            case 'resumed':
-            case 'battery_skip': return ht('idleRestore');
+            case 'cooled': return ht('thermalRestore');
+            case 'disabled': return ht(entry.source === 'idle' ? 'idleDisabled' : 'thermalDisabled');
+            case 'resumed': return ht('idleRestore');
+            case 'battery_skip': return ht('idleBatterySkip');
             case 'plugged_switch': return ht('plugged');
-            case 'unplugged_restore':
-            case 'disabled_restore': return ht('unplugged');
+            case 'unplugged_restore': return ht('unplugged');
+            case 'disabled_restore': return ht('powerSourceDisabled');
             case 'low_battery_switch': return ht('lowBattery');
             case 'low_battery_restore': return ht('lowBatteryRestore');
             case 'parameters_reapply': return ht('parameters');
@@ -2220,6 +2232,7 @@
     }
 
     function planHistoryVisible() {
+        if (document.hidden) return false;
         const panel = document.querySelector('#view-power .vm-acc-item[data-pm="history"]');
         const view = document.getElementById('view-power');
         const reorgPanel = document.querySelector('[data-vm-panel-group="power-plans"][data-vm-panel="history"]');
@@ -2232,12 +2245,15 @@
         if (!Host.available || planHistoryState.loading) return;
         mountPlanHistoryUi();
         planHistoryState.loading = true;
+        planHistoryState.error = false;
         try {
             const snapshot = await Host.call('getPlanHistory');
-            const revision = Number(snapshot && snapshot.revision);
-            if (Number.isFinite(revision) && revision >= planHistoryState.revision) {
+            const revision = snapshot?.revision;
+            if (!Number.isSafeInteger(revision) || revision < 0 || !Array.isArray(snapshot.entries))
+                throw new Error('Invalid plan history snapshot');
+            if (revision >= Math.max(planHistoryState.revision, planHistoryState.notifiedRevision)) {
                 planHistoryState.revision = revision;
-                planHistoryState.entries = Array.isArray(snapshot.entries) ? snapshot.entries : [];
+                planHistoryState.entries = snapshot.entries;
                 planHistoryState.dirty = false;
                 planHistoryState.error = false;
             }
@@ -2246,7 +2262,10 @@
             console.error('getPlanHistory failed', err);
         } finally {
             planHistoryState.loading = false;
-            renderPlanHistory();
+            if (planHistoryVisible()) {
+                renderPlanHistory();
+                if (planHistoryState.dirty && !planHistoryState.error) loadPlanHistory();
+            }
         }
     }
 
@@ -2277,14 +2296,19 @@
             if (event.target.closest('#plan-history-clear')) {
                 try {
                     const result = await Host.call('clearPlanHistory');
-                    const revision = Number(result && result.revision);
-                    if (!Number.isFinite(revision) || revision >= planHistoryState.revision) {
-                        if (Number.isFinite(revision)) planHistoryState.revision = revision;
+                    const revision = result?.revision;
+                    if (!Number.isSafeInteger(revision) || revision < 0)
+                        throw new Error('Invalid plan history revision');
+                    if (revision >= Math.max(planHistoryState.revision, planHistoryState.notifiedRevision)) {
+                        planHistoryState.revision = revision;
                         planHistoryState.entries = [];
                         planHistoryState.dirty = false;
                         planHistoryState.error = false;
                         planHistoryState.visibleCount = 50;
                         renderPlanHistory();
+                    } else {
+                        planHistoryState.dirty = true;
+                        if (planHistoryVisible()) loadPlanHistory();
                     }
                 } catch (err) {
                     planHistoryState.error = true;
@@ -2294,8 +2318,9 @@
         });
 
         planHistoryUnsubscribe = Host.on('planHistoryChanged', data => {
-            const revision = Number(data && data.revision);
-            if (Number.isFinite(revision) && revision <= planHistoryState.revision) return;
+            const revision = data?.revision;
+            if (!Number.isSafeInteger(revision) || revision < 0 || revision <= planHistoryState.revision) return;
+            planHistoryState.notifiedRevision = Math.max(planHistoryState.notifiedRevision, revision);
             planHistoryState.dirty = true;
             if (planHistoryVisible()) loadPlanHistory();
         });
@@ -2306,12 +2331,14 @@
         document.addEventListener('viewchange', refreshIfVisible);
         document.addEventListener('voltuiviewchanged', refreshIfVisible);
         document.addEventListener('voltuisubviewchanged', refreshIfVisible);
+        document.addEventListener('visibilitychange', refreshIfVisible);
         window.addEventListener('unload', () => {
             if (planHistoryUnsubscribe) planHistoryUnsubscribe();
             planHistoryUnsubscribe = null;
             document.removeEventListener('viewchange', refreshIfVisible);
             document.removeEventListener('voltuiviewchanged', refreshIfVisible);
             document.removeEventListener('voltuisubviewchanged', refreshIfVisible);
+            document.removeEventListener('visibilitychange', refreshIfVisible);
         }, { once: true });
         planHistoryWired = true;
         renderPlanHistory();

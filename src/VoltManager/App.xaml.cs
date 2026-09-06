@@ -492,10 +492,10 @@ public partial class App : Application
             if (!handledByHigherPriority)
             {
                 var target = Automation.Evaluate(avg, now, ActivePlan?.PlanId, Settings.Current);
-                var rule = string.IsNullOrWhiteSpace(Automation.CandidateRuleId)
+                var rule = target == null || string.IsNullOrWhiteSpace(Automation.CandidateRuleId)
                     ? null
                     : Settings.Current.Rules.FirstOrDefault(r => r.Id == Automation.CandidateRuleId);
-                var context = HistoryContext(
+                var context = target == null ? null : HistoryContext(
                     PlanHistoryCategory.Automatic,
                     "cpuAutomation",
                     "cpu_rule_triggered",
@@ -592,11 +592,11 @@ public partial class App : Application
             if (!_appProfilePlanSessionActive)
             {
                 _planBeforeAppProfileSession = ActivePlan?.PlanId;
-                _appProfileHistoryName = profileName;
                 _appProfilePlanSessionActive = true;
                 Automation.Reset();
             }
 
+            _appProfileHistoryName = profileName;
             var target = state.TargetPlan.Value;
             _planGuard.SetExpected(target, "appProfile", state.ActiveProfiles.FirstOrDefault()?.Name ?? "");
             if (ActivePlan?.PlanId == target)
@@ -679,13 +679,13 @@ public partial class App : Application
             if (!_heavyAppPlanSessionActive)
             {
                 _planBeforeHeavyAppSession = ActivePlan?.PlanId;
-                _heavyAppHistoryName = activeProcess?.Name ?? "";
-                _heavyAppHistoryKind = activeProcess?.Kind ?? "";
-                _heavyAppHistoryReason = activeProcess?.Reason ?? "";
                 _heavyAppPlanSessionActive = true;
                 Automation.Reset();
             }
 
+            _heavyAppHistoryName = activeProcess?.Name ?? "";
+            _heavyAppHistoryKind = activeProcess?.Kind ?? "";
+            _heavyAppHistoryReason = activeProcess?.Reason ?? "";
             var target = state.TargetPlan;
             _planGuard.SetExpected(target, "heavyApp", state.ActiveProcesses.FirstOrDefault()?.Name ?? "");
             if (ActivePlan?.PlanId == target)

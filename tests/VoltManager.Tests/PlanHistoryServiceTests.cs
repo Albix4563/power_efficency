@@ -209,6 +209,81 @@ public sealed class PlanHistoryServiceTests
         Assert.Empty(new PlanHistoryService().GetSnapshot().Entries);
     }
 
+    [Theory]
+    [InlineData(PowerPlanService.PerformanceGuid)]
+    [InlineData(null)]
+    public void ReapplyPlan_NeverActivatesAnInactiveOrUnknownPlan(string? activeGuid)
+    {
+        var commands = new List<string>();
+        var service = CreateService(() => activeGuid == null ? null : Guid.Parse(activeGuid), args =>
+        {
+            commands.Add(args);
+            return "";
+        });
+
+        Assert.Equal(activeGuid != null, service.ReapplyPlan(PowerPlanService.BalancedGuid, ManualContext));
+        Assert.Empty(commands);
+        Assert.Empty(service.History.GetSnapshot().Entries);
+    }
+
+    [Fact]
+    public void SetPlanParameter_ReportsUnverifiableReapplyEvenWhenIndexesWereWritten()
+    {
+        var reads = new Queue<Guid?>([Guid.Parse(PowerPlanService.BalancedGuid), null]);
+        var service = CreateService(() => reads.Dequeue(), args => args == "/list"
+            ? $"{PowerPlanService.BalancedGuid} (Balanced)"
+            : "0x00000032 0x00000032");
+
+        Assert.False(new PowerPlanParameterService(service).SetPlanParameter(
+            PowerPlanService.BalancedGuid, "processorMax", 50, 50));
+        Assert.Equal(PlanHistoryOutcome.Unverifiable, Assert.Single(service.History.GetSnapshot().Entries).Outcome);
+    }
+
+    [Fact]
+    public void SuccessfulNoOp_EndsThePreviousProblemGroup()
+    {
+        var service = CreateService(() => Guid.Parse(PowerPlanService.BalancedGuid), _ => "");
+        Assert.False(service.SetActivePlan(PlanId.Performance, ManualContext));
+        Assert.True(service.SetActivePlan(PlanId.Balanced, ManualContext));
+        Assert.False(service.SetActivePlan(PlanId.Performance, ManualContext));
+
+        Assert.Equal(2, service.History.GetSnapshot().Entries.Count);
+        Assert.All(service.History.GetSnapshot().Entries, entry => Assert.Equal(1, entry.Attempts));
+    }
+
+    [Fact]
+    public void ChangingSensorSamples_DoNotSplitRetriesOfTheSameDecision()
+    {
+        var history = new PlanHistoryService();
+        var start = new DateTime(2026, 9, 6, 8, 0, 0, DateTimeKind.Utc);
+        var context = new PlanChangeContext(PlanHistoryCategory.Automatic, "thermal", "active_switch",
+            new Dictionary<string, string> { ["peakTemp"] = "95", ["thresholdCelsius"] = "90" });
+        history.Record(start, context, null, null, null, PlanHistoryOutcome.Failed);
+        history.Record(start.AddSeconds(3), context with
+        {
+            Details = new Dictionary<string, string> { ["peakTemp"] = "96", ["thresholdCelsius"] = "90" }
+        }, null, null, null, PlanHistoryOutcome.Failed);
+        Assert.Equal(2, Assert.Single(history.GetSnapshot().Entries).Attempts);
+
+        history.Record(start.AddSeconds(6), context with
+        {
+            Details = new Dictionary<string, string> { ["peakTemp"] = "96", ["thresholdCelsius"] = "85" }
+        }, null, null, null, PlanHistoryOutcome.Failed);
+        Assert.Equal(2, history.GetSnapshot().Entries.Count);
+    }
+
+    [Theory]
+    [InlineData(31)]
+    [InlineData(-1)]
+    public void ProblemGrouping_RejectsExpiredOrBackwardsTimestamps(int seconds)
+    {
+        var history = new PlanHistoryService();
+        var start = new DateTime(2026, 9, 6, 8, 0, 0, DateTimeKind.Utc);
+        history.Record(start, ManualContext, null, null, null, PlanHistoryOutcome.Failed);
+        history.Record(start.AddSeconds(seconds), ManualContext, null, null, null, PlanHistoryOutcome.Failed);
+        Assert.Equal(2, history.GetSnapshot().Entries.Count);
+    }
+
     private static PowerPlanService CreateService(Func<Guid?> read, Func<string, string> run)
         => new(new SettingsService(), read, run, new PlanHistoryService(), new FixedClock());
 

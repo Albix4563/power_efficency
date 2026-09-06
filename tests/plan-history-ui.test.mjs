@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
 
 function source(path) {
   return readFileSync(new URL('../' + path, import.meta.url), 'utf8');
@@ -32,7 +33,7 @@ test('history filters, 50-row paging and problem semantics are explicit', () => 
 });
 
 test('history revision handling rejects stale notifications and stale snapshots', () => {
-  assert.match(power, /revision >= planHistoryState\.revision/);
+  assert.match(power, /revision >= Math\.max\(planHistoryState\.revision, planHistoryState\.notifiedRevision\)/);
   assert.match(power, /revision <= planHistoryState\.revision\) return/);
   assert.match(power, /planHistoryState\.dirty = true/);
   assert.match(power, /if \(planHistoryVisible\(\)\) loadPlanHistory\(\)/);
@@ -70,4 +71,157 @@ test('bridge event subscription supports lifecycle cleanup', () => {
   assert.match(power, /planHistoryUnsubscribe = Host\.on\('planHistoryChanged'/);
   assert.match(power, /window\.addEventListener\('unload'/);
   assert.match(power, /planHistoryUnsubscribe\(\)/);
+});
+
+// Execute the real history functions with a small DOM and deferred bridge replies.
+function historyHarness(language = 'en') {
+  const nodes = new Map();
+  const events = new Map();
+  const requests = [];
+  const node = () => ({
+    children: [], dataset: {}, textContent: '', hidden: false,
+    classList: { contains: () => false },
+    setAttribute() {},
+    set innerHTML(_) { throw new Error('Dynamic history content must remain text'); },
+    appendChild(child) { this.children.push(child); if (child.id) nodes.set(child.id, child); },
+    replaceChildren() { this.children = []; },
+    addEventListener(name, handler) { this[name] = handler; },
+    closest() { return this; },
+  });
+  nodes.set('plan-history-mount', node());
+  const panel = node();
+  const document = {
+    hidden: false,
+    getElementById: id => nodes.get(id),
+    createElement: node,
+    querySelector: selector => selector.startsWith('[data-vm-panel-group=') ? panel : null,
+    querySelectorAll: () => [],
+    addEventListener: (name, handler) => events.set(name, handler),
+    removeEventListener: name => events.delete(name),
+  };
+  const context = vm.createContext({
+    document, window: { addEventListener() {} }, console: { error() {} },
+    lang: () => language, I18n: { t: key => key },
+    Host: {
+      available: true,
+      on(name, handler) { events.set(name, handler); return () => events.delete(name); },
+      call(method) { return new Promise((resolve, reject) => requests.push({ method, resolve, reject })); },
+    },
+  });
+  vm.runInContext(
+    power.slice(power.indexOf('    let planHistoryWired'), power.indexOf('    const ruleIds')) +
+    power.slice(power.indexOf('    const historyText'), power.indexOf('    function esc')) +
+    power.slice(power.indexOf('    function historyLocale'), power.indexOf("    Host.call('getSettings')")) +
+    '\nwirePlanHistoryUi(); globalThis.api = { loadPlanHistory, historyExplanation, historyNumber, renderPlanHistory, state: planHistoryState };',
+    context,
+  );
+  return { ...context.api, nodes, events, requests, document };
+}
+
+const flush = () => new Promise(resolve => setImmediate(resolve));
+
+test('a notification arriving during a read triggers a fresh snapshot without rendering stale data', async () => {
+  const h = historyHarness();
+  const loading = h.loadPlanHistory();
+  h.events.get('planHistoryChanged')({ revision: 2 });
+  h.requests[0].resolve({ revision: 1, entries: [{ id: 1 }] });
+  await loading;
+  assert.equal(h.state.revision, -1);
+  assert.equal(h.requests.length, 2);
+  h.requests[1].resolve({ revision: 2, entries: [] });
+  await flush();
+  assert.equal(h.state.revision, 2);
+  assert.equal(h.state.dirty, false);
+});
+
+test('clearing history cannot lose a newer event while an older snapshot is in flight', async () => {
+  const h = historyHarness();
+  const loading = h.loadPlanHistory();
+  const clearing = h.nodes.get('plan-history-mount').click({ target: {
+    closest: selector => selector === '#plan-history-clear' ? {} : null,
+  } });
+  h.events.get('planHistoryChanged')({ revision: 3 });
+  h.requests[1].resolve({ revision: 2 });
+  await clearing;
+  h.requests[0].resolve({ revision: 1, entries: [] });
+  await loading;
+  assert.equal(h.requests.length, 3);
+  h.requests[2].resolve({ revision: 3, entries: [{ id: 3 }] });
+  await flush();
+  assert.equal(h.state.entries[0].id, 3);
+  assert.equal(h.state.revision, 3);
+});
+
+test('history parks bridge reads while hidden and catches up when visible again', async () => {
+  const h = historyHarness();
+  h.document.hidden = true;
+  h.events.get('planHistoryChanged')({ revision: 4 });
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.state.dirty, true);
+  h.document.hidden = false;
+  h.events.get('visibilitychange')();
+  h.requests[0].resolve({ revision: 4, entries: [] });
+  await flush();
+  assert.equal(h.state.revision, 4);
+});
+
+test('history retries failed reads without starting a request loop', async () => {
+  const h = historyHarness();
+  const loading = h.loadPlanHistory();
+  h.requests[0].reject(new Error('bridge unavailable'));
+  await loading;
+  assert.equal(h.state.error, true);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.nodes.get('plan-history-retry').hidden, false);
+  const retrying = h.loadPlanHistory();
+  h.events.get('planHistoryChanged')({ revision: 1 });
+  h.requests[1].resolve({ revision: 0, entries: [] });
+  await retrying;
+  assert.equal(h.requests.length, 3);
+  h.requests[2].resolve({ revision: 1, entries: [] });
+  await flush();
+  assert.equal(h.state.error, false);
+  assert.equal(h.state.revision, 1);
+});
+
+test('an invalid bridge snapshot fails once and offers retry', async () => {
+  const h = historyHarness();
+  const loading = h.loadPlanHistory();
+  h.requests[0].resolve(null);
+  await loading;
+  assert.equal(h.state.error, true);
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.nodes.get('plan-history-retry').hidden, false);
+});
+
+test('actual history renderer pages, filters, and keeps app names literal', () => {
+  const h = historyHarness();
+  const name = 'Editor $& <img src=x onerror=alert(1)>';
+  h.state.entries = Array.from({ length: 60 }, (_, id) => ({
+    id, category: 'automatic', source: 'appProfile', reasonCode: 'profile_applied',
+    outcome: 'applied', details: { appName: name }, lastTimestampUtc: '2026-09-06T08:00:00Z',
+  }));
+  h.renderPlanHistory();
+  const list = h.nodes.get('plan-history-list');
+  assert.equal(list.children.length, 50);
+  assert.equal(list.children[0].children[1].textContent, `App profile: ${name}`);
+  assert.equal(h.nodes.get('plan-history-more').hidden, false);
+  h.state.visibleCount += 50;
+  h.renderPlanHistory();
+  assert.equal(list.children.length, 60);
+  h.state.filter = 'problems';
+  h.renderPlanHistory();
+  assert.equal(list.children.length, 0);
+  assert.match(h.nodes.get('plan-history-state').textContent, /No events match/);
+});
+
+test('reason codes shared by different automations retain the right cause in every language', () => {
+  for (const language of ['it', 'en', 'es', 'zh']) {
+    const h = historyHarness(language);
+    const explain = (source, reasonCode) => h.historyExplanation({ source, reasonCode });
+    assert.notEqual(explain('idle', 'disabled'), explain('thermal', 'disabled'));
+    assert.notEqual(explain('powerSource', 'disabled_restore'), explain('powerSource', 'unplugged_restore'));
+    assert.notEqual(explain('idle', 'battery_skip'), explain('idle', 'resumed'));
+    assert.equal(h.historyNumber(null), '—');
+  }
 });

@@ -51,6 +51,7 @@ public sealed class PlanHistoryService
     private readonly List<PlanHistoryEntry> _entries = new(Capacity);
     private long _nextId;
     private long _revision;
+    private bool _problemGroupOpen;
 
     public event Action<long>? Changed;
 
@@ -66,6 +67,7 @@ public sealed class PlanHistoryService
         lock (_lock)
         {
             _entries.Clear();
+            _problemGroupOpen = false;
             revision = ++_revision;
         }
         Changed?.Invoke(revision);
@@ -82,7 +84,7 @@ public sealed class PlanHistoryService
     {
         lock (_lock)
         {
-            if (IsProblem(outcome) && _entries.Count > 0)
+            if (_problemGroupOpen && IsProblem(outcome) && _entries.Count > 0)
             {
                 var last = _entries[^1];
                 if (IsSameProblem(last, timestampUtc, context, previous, requested, observed, outcome))
@@ -96,6 +98,7 @@ public sealed class PlanHistoryService
                 }
             }
 
+            _problemGroupOpen = IsProblem(outcome);
             _entries.Add(new PlanHistoryEntry(
                 ++_nextId,
                 timestampUtc,
@@ -120,6 +123,11 @@ public sealed class PlanHistoryService
 
     internal void PublishChanged(long revision) => Changed?.Invoke(revision);
 
+    internal void EndProblemGroup()
+    {
+        lock (_lock) _problemGroupOpen = false;
+    }
+
     private static bool IsProblem(PlanHistoryOutcome outcome)
         => outcome is PlanHistoryOutcome.Failed or PlanHistoryOutcome.Unverifiable;
 
@@ -132,6 +140,7 @@ public sealed class PlanHistoryService
         PlanHistoryPlan? observed,
         PlanHistoryOutcome outcome)
         => IsProblem(last.Outcome)
+           && timestampUtc >= last.LastTimestampUtc
            && timestampUtc - last.LastTimestampUtc <= ProblemGroupingWindow
            && last.Category == context.Category
            && last.Source == context.Source
@@ -140,8 +149,13 @@ public sealed class PlanHistoryService
            && last.PreviousPlan == previous
            && last.RequestedPlan == requested
            && last.ObservedPlan == observed
-           && DictionariesEqual(last.Details, context.Details);
+           && DecisionDetailsEqual(last.Details, context.Details);
 
-    private static bool DictionariesEqual(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b)
-        => a.Count == b.Count && a.All(kv => b.TryGetValue(kv.Key, out var value) && value == kv.Value);
+    // Live readings vary between retries; configuration and cause still have to match.
+    private static bool IsDecisionDetail(string key)
+        => key is not ("averageCpu" or "peakTemp" or "idleSeconds" or "batteryPercent");
+
+    private static bool DecisionDetailsEqual(IReadOnlyDictionary<string, string> a, IReadOnlyDictionary<string, string> b)
+        => a.Count(kv => IsDecisionDetail(kv.Key)) == b.Count(kv => IsDecisionDetail(kv.Key))
+           && a.Where(kv => IsDecisionDetail(kv.Key)).All(kv => b.TryGetValue(kv.Key, out var value) && value == kv.Value);
 }

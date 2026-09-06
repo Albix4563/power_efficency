@@ -272,7 +272,7 @@ public class PowerPlanService
                     "manual",
                     "manual_selection",
                     new Dictionary<string, string>()),
-                forceIfUnchanged: false,
+                reapplyOnly: false,
                 revisions);
         }
         PublishHistoryChanges(revisions);
@@ -289,7 +289,7 @@ public class PowerPlanService
                 guid.ToLowerInvariant(),
                 ResolvePlanId(guid, _settings.Current.PlanGuidMap),
                 context,
-                forceIfUnchanged: true,
+                reapplyOnly: true,
                 revisions);
         }
         PublishHistoryChanges(revisions);
@@ -322,15 +322,22 @@ public class PowerPlanService
         string requestedGuid,
         PlanId? requestedPlanId,
         PlanChangeContext context,
-        bool forceIfUnchanged,
+        bool reapplyOnly,
         List<long> revisions)
     {
         var current = ObserveActivePlanLocked(revisions);
+        // Recheck under the same lock as /setactive: editing a plan must never
+        // switch back to it after another command selected a different plan.
+        if (reapplyOnly && (current == null || !SameGuid(current.Guid, requestedGuid)))
+            return current != null;
         var previous = current ?? _lastObserved;
         var requested = new PlanHistoryPlan(requestedGuid, requestedPlanId?.ToString() ?? "", requestedPlanId);
 
-        if (!forceIfUnchanged && current != null && SameGuid(current.Guid, requestedGuid))
+        if (!reapplyOnly && current != null && SameGuid(current.Guid, requestedGuid))
+        {
+            History.EndProblemGroup();
             return true;
+        }
 
         _runPowercfg($"/setactive {requestedGuid}");
         var observed = ReadActivePlanLocked();
@@ -353,6 +360,7 @@ public class PowerPlanService
         _lastObserved = observed;
         if (SameGuid(observed.Guid, requestedGuid))
         {
+            History.EndProblemGroup();
             if (previous == null || !SameGuid(previous.Guid, requestedGuid))
             {
                 revisions.Add(History.Record(

@@ -148,18 +148,15 @@ public class PowerPlanParameterService
             _power.ExecutePowercfg($"/setacvalueindex {guid} {spec.Subgroup} {spec.Setting} {acValue}");
             _power.ExecutePowercfg($"/setdcvalueindex {guid} {spec.Subgroup} {spec.Setting} {dcValue}");
 
-            if (string.Equals(GetActivePlanGuid(), guid, StringComparison.OrdinalIgnoreCase))
-            {
-                _power.ReapplyPlan(guid, new PlanChangeContext(
-                    PlanHistoryCategory.Manual,
-                    "advancedParameters",
-                    "parameters_reapply",
-                    new Dictionary<string, string> { ["setting"] = settingKey }));
-            }
+            bool reapplied = _power.ReapplyPlan(guid, new PlanChangeContext(
+                PlanHistoryCategory.Manual,
+                "advancedParameters",
+                "parameters_reapply",
+                new Dictionary<string, string> { ["setting"] = settingKey }));
 
             // Verify instead of assuming that powercfg accepted the setting.
             var updated = QueryIndexes(guid, spec.Subgroup, spec.Setting);
-            return updated.Supported && updated.Ac == acValue && updated.Dc == dcValue;
+            return reapplied && updated.Supported && updated.Ac == acValue && updated.Dc == dcValue;
         }
         catch
         {

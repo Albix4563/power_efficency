@@ -14,6 +14,8 @@ Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/).
 
 ### Corretto
 
+- **Cronologia piani — aggiornamenti e cause affidabili.** Gli eventi arrivati durante caricamento o cancellazione non vengono più persi; la cronologia si riallinea al ritorno in primo piano. I tentativi ripetuti della stessa automazione vengono raggruppati anche quando cambiano le letture dei sensori; i motivi distinguono disattivazione e ripristino senza dichiarare riusciti i comandi falliti. La modifica dei parametri avanzati non riattiva più un piano cambiato nel frattempo e segnala una riapplicazione non verificabile.
+
 - **Sidebar — indicatore della voce attiva disallineato durante compress/expand.**
   Quando si passava dalla barra laterale estesa a quella compatta (o viceversa), il
   selettore luminoso poteva posizionarsi più in basso rispetto alla voce selezionata
