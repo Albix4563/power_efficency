@@ -414,17 +414,6 @@
         });
     }
 
-    function suppressLegacySystemItem() {
-        const nav = $('nav-list');
-        if (!nav) return;
-        new MutationObserver(() => {
-            nav.querySelectorAll('a[data-view="system"]').forEach(link => {
-                const item = link.closest('li');
-                if (item && !item.classList.contains('hidden')) item.remove();
-            });
-        }).observe(nav, { childList: true, subtree: true });
-    }
-
     function applyLanguage() {
         api.applyTranslations?.();
         document.dispatchEvent(new CustomEvent('voltuistranslated'));
@@ -443,7 +432,6 @@
         api.installSidebar?.();
         api.installTopStatus?.();
         wireInteractions();
-        suppressLegacySystemItem();
         applyLanguage();
         installBatteryCapabilityDetection();
 

@@ -349,21 +349,6 @@ public class HostBridge : IDisposable
             case "getCpuAutomationState":
                 return _app.CpuAutomationState;
 
-            case "setActivePlan":
-            {
-                var planStr = payload.GetProperty("plan").GetString() ?? "";
-                if (!Enum.TryParse<PlanId>(planStr, true, out var plan))
-                    throw new ArgumentException(_loc.T("Error_UnknownPlan", planStr));
-                bool okSet = await Task.Run(() => _power.SetActivePlan(
-                    plan,
-                    new PlanChangeContext(
-                        PlanHistoryCategory.Manual,
-                        "manual",
-                        "manual_selection",
-                        new Dictionary<string, string>())));
-                return new { success = okSet };
-            }
-
             case "setManualOverride":
             {
                 var planStr = payload.GetProperty("plan").GetString() ?? "";
@@ -489,15 +474,6 @@ public class HostBridge : IDisposable
                 return new { success = true, autoUpdates = _settings.Current.AutoUpdates };
             }
 
-            case "setPreviewUpdates":
-            {
-                bool enable = payload.GetProperty("enabled").GetBoolean();
-                _settings.Current.AutoUpdates ??= new AutoUpdateSettings();
-                _settings.Current.AutoUpdates.PreviewChannel = enable;
-                _settings.Save();
-                return new { success = true, autoUpdates = _settings.Current.AutoUpdates };
-            }
-
             case "snoozeUpdate":
             {
                 int minutes = payload.TryGetProperty("minutes", out var minutesEl) && minutesEl.ValueKind == JsonValueKind.Number
@@ -531,9 +507,6 @@ public class HostBridge : IDisposable
 
             case "getAppPowerProfileStatus":
                 return await Task.Run(_app.GetAppPowerProfileStatus);
-
-            case "refreshAppPowerProfiles":
-                return await Task.Run(_app.RefreshAppPowerProfiles);
 
             case "getPowerSourcePlanState":
                 return await Task.Run(() => _app.GetPowerSourcePlanState());
